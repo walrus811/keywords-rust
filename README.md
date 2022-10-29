@@ -1,10 +1,10 @@
 From [The Rust Programming Language](https://doc.rust-lang.org/book/title-page.html).
 
-## [도구](#tool)
+- ### [도구](#tool)
 
-## [문법](#syntax)
+- ### [문법](#syntax)
 
-<a href="tool"></a>
+<a id="tool"></a>
 
 ## 도구
 
@@ -44,7 +44,7 @@ $ cargo check
 
 - 컨피그 파일 형식(https://toml.io/en/)
 
-<a href="syntax"></a>
+<a id="syntax"></a>
 
 ## 문법
 
