@@ -8,14 +8,6 @@ From [The Rust Programming Language](https://doc.rust-lang.org/book/title-page.h
 
 ## 도구
 
-### rustc
-
-- 컴파일러
-
-```
-$ rustc --version
-```
-
 ### rustup
 
 - Rust 도구
@@ -26,23 +18,59 @@ $ rustup self uninstall
 $ rustup doc
 ```
 
+### rustc
+
+- 컴파일러
+- AOT 컴파일
+- 언어 구조상 컴파일 타임에 레퍼런스나 동시성 문제를 잡아낼 수 있음
+
+```
+$ rustc --version
+```
+
 ### cargo
 
-- 패키지 매니저.
+- 빌드 시스템이자 패키지 매니저.
 - 시맨틱 버전 사용.
 - [crates.io](https://crates.io/)
+- 실행 커맨드 동작 시 소스의 변화를 감지하여 필요한 순간에만 빌드한다.
 
 ```
 $ cargo --version
-$ cargo [프로젝트 이름]
+$ cargo new [프로젝트 이름]
 $ cargo build [--release]
-$ cargo run
-$ cargo check
+$ cargo run # 빌드와 실행을 하는 올인원 커맨드
+$ cargo check # 코드가 컴파일 될 수 있는지 빠르게 체크하지만, 결과물은 만들지 않는다.
+$ cargo update # 프로젝트 내 crate 버전 업데이트
+```
+
+#### cargo 프로젝트 구조
+
+- 소스 코드는 `src`에 보관
+- 루트 디렉토리에는 README, 라이센스, 설정 파일 등 보관
+
+```
+> tree
+[프로젝트 이름]
+│  Cargo.toml
+│  Cargo.lock
+└─src
+│       main.rs
+└─target
+        [cargo build 결과물]
 ```
 
 ### toml
 
 - 컨피그 파일 형식(https://toml.io/en/)
+
+### 컨벤션
+
+- 소스 파일 이름은 `snake_case`로 짓는다.
+
+### Crates.io
+
+- [패키지 저장소](https://crates.io/)
 
 <a id="syntax"></a>
 
@@ -56,10 +84,21 @@ $ cargo check
 println!("Hello world!")
 ```
 
+### indent
+
+- 탭이 아니라 스페이스 4개를 씀
+
+### prelude
+
+- 표준 라이브러리 중 Rust가 자동으로 임포트하는 것들
+- 굳이 임포트할 필요는 없다.
+- [목록](https://doc.rust-lang.org/std/prelude/index.html)
+
 ### 변수
 
-- `let`, 기본적으로 불변. 컴파일 타임에 안전한 코드를 작성할 수 있게 해준다.
-- `mut`, 사용시 가변. 명시적인 사용으로 이 변수를 다른 코드가 바꿀 수 있다는 걸 암시한다.
+- `let` 키워드로 변수를 선언한다. 기본적으로 불변. 컴파일 타임에 안전한 코드를 작성할 수 있게 해준다.
+- `mut`, 이름 앞에 사용, 사용시 가변. 명시적인 사용으로 이 변수를 다른 코드가 바꿀 수 있다는 걸 암시한다.
+- 컨벤션으로 `snake_case`를 사용한다.
 
 ```rust
 let apples = 5;
@@ -73,7 +112,8 @@ let mut banana= 10;
 - 스코프 상관 없이 쓰일 수 있다.
 - 컴파일 타임에 값이 결정가능한 표현식만 온다.
 - 자신이 속한 스코프 내에서 프로그램이 끝날 때까지 유효하다.
-- `mut`와 쓸 수 없다.
+- `mut`와 쓸 수 없다. 상수는 변경 될 수 있다 개념이 없기 때문이다.
+- 컨벤션으로 `UPPER_CASE`를 사용한다.
 
 ```rust
 const THREE_HOURS_IN_SECONDS: u32 = 60 * 60 * 3;
@@ -85,8 +125,8 @@ const THREE_HOURS_IN_SECONDS: u32 = 60 * 60 * 3;
 - `let`과 함께 동일한 이름을 쓴다.
 - 변수를 다른 타입으로 바꾸는 등의 응용에 사용.
 - 굳이 이름을 안 바꿔도 된다.
-- `mut`과는 여러 차이점이 존재한다.
-  - `let` 키워드를 사용하는 덕에 해당 변수를 변경하고도 변수의 불변성을 유지할 수 있다(컴파일 타임 에러를 얻을 수 있다).
+- `mut`와는 여러 차이점이 존재한다.
+  - `let` 키워드를 사용하는 덕에 다른 스코프에서 해당 변수를 사용하고 변경하고도 변수의 불변성을 유지할 수 있다(컴파일 타임 에러를 얻을 수 있다).
   - 섀도잉은 변수의 타입을 변경하는 응용이 가능하다.
 
 ```rust
@@ -98,6 +138,19 @@ fn main() {
         println!("The value of x in the inner scope is: {x}"); // 12
     }
     println!("The value of x is: {x}"); // 6
+}
+```
+
+```rust
+fn main() {
+    let spaces = "   ";
+
+    {
+        let spaces = spaces.len();
+        println!("spaces as number: {spaces}"); // 4
+    }
+
+    println!("spaces as string: {spaces}"); // 
 }
 ```
 
