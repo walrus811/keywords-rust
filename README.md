@@ -37,7 +37,7 @@ $ rustc --version
 
 ```
 $ cargo --version
-$ cargo new [프로젝트 이름]
+$ cargo new [프로젝트 이름] [--lib]
 $ cargo build [--release]
 $ cargo run # 빌드와 실행을 하는 올인원 커맨드
 $ cargo check # 코드가 컴파일 될 수 있는지 빠르게 체크하지만, 결과물은 만들지 않는다.
@@ -553,6 +553,7 @@ fn calculate_length(s: String) -> (String, usize) {
 ### 레퍼런스
 
 -   `&`를 이용해 선언한다. 레퍼런스를 통해 소유권 이동 없이 변수를 사용할 수 있다. 레퍼런스가 소유권을 가지지 않으므로 레퍼런스가 없어진다고 해서 값이 사라지지 않는다.
+-   파라미터에 레퍼런스를 쓸지말지에 대해서는 다음과 같이 생각해보자. `이 함수가 해당 변수의 소유권을 가져야할 이유가 있는가?`
 -   이렇게 레퍼런스를 만드는 동작을 `borrowing`이라고 한다.
 -   레퍼런스 또한 기본적으로 불변이다.
 -   `mut` 키워드로 가변으로 만들 수 있다. 당연히 **빌려주는 쪽**도 가변이어야 한다.
@@ -736,6 +737,9 @@ fn main() {
 
 ### struct
 
+-   대문자로 시작하는 네이밍 컨벤션을 쓴다.
+-   어느 특정 필드만 가변으로 변경할 수 없다.
+
 ```rust
 struct User {
     active: bool,
@@ -743,76 +747,1046 @@ struct User {
     email: String,
     sign_in_count: u64,
 }
+struct User {
+    active: bool,
+    username: String,
+    email: String,
+    sign_in_count: u64,
+}
+
+fn main() {
+    let mut user1 = User {
+        email: String::from("someone@example.com"),
+        username: String::from("someusername123"),
+        active: true,
+        sign_in_count: 1,
+    };
+
+    user1.email = String::from("anotheremail@example.com");
+}
 ```
 
-### Result
+```rust
+fn build_user(email: String, username: String) -> User {
+    User {
+        email, // js처럼 간략하게도 쓸 수 있다.
+        username,
+        active: true,
+        sign_in_count: 1,
+    }
+}
+```
 
--   `enumeration`으로 `OK`와 `Err`의 값을 지니며 `expect` 메서드를 가지고 있음.
--   `expect`는 Result의 값이 `Err`일 때 인자로 건넨 메시지를 출력하고 프로그램이 예외를 발생시키도록함(Crash?).
+-   js의 오브젝트 스프레드와 유사한 `..`이 존재한다(update syntax).
+-   다만 이 연산은 `=`로 인식 되어 `Copy` 트레이트가 구현 되어있지 않은 필드에 적용하면 필드의 소유권이 이동해 **해당 필드**가 무효화 되버리므로 주의해야한다. 이렇게 소유권이 이동한 채로 인스턴스 그 자체는 사용할 수 없지만 소유권을 가지고 있는 필드는 여전히 사용할 수 있다.
+-   컴파일러는 이런 동작을 `partial move`라고 표현한다.
 
-### enumeration
+```rust
+fn main() {
+    // --snip--
 
--   각 값을 `variant`라고 부른다.
--   타입을 구현하는 개념인지 메서드가 존재한다.
+    let user2 = User {
+        email: String::from("another@example.com"),
+        ..user1 // update syntax
+    };
+}
+```
+
+```rust
+fn main() {
+    let mut user1 = User {
+        email: String::from("someone@example.com"),
+        username: String::from("someusername123"),
+        active: true,
+        sign_in_count: 1,
+    };
+
+    let user2 = User {
+        email: String::from("another@example.com"),
+        ..user1
+    };
+    // user1의 username 소유권이 user2의 username으로 넘어가 user1이 무효화 된다.
+    println!("{:?}", user1)
+                    //^^^^^ value borrowed here after partial move
+}
+```
+
+```rust
+fn main() {
+    // --snip--
+
+    let user2 = User {
+        email: String::from("another@example.com"),
+        username: String::from("another"),
+        ..user1
+    };
+    // 나머지 필드는 `Copy` 트레이트가 구현 되어있으므로 소유권에 있어서 문제가 발생하지 않는다.
+    println!("{:?}", user1)
+}
+```
+
+```rust
+fn main() {
+    // --snip--
+
+    let user2 = User {
+        email: String::from("another@example.com"),
+        ..user1
+    };
+    //active는 유효하다.
+    println!("{:?}", user1.active)
+}
+```
+
+#### tuple struct
+
+-   struct를 마치 튜플처럼 사용할 수도 있다.
+-   필드에 접근할 땐 `.0`처럼 튜플과 동일하다.
+
+```rust
+//둘은 다른 타입이다.
+struct Color(i32, i32, i32);
+struct Point(i32, i32, i32);
+
+fn main() {
+    let black = Color(0, 0, 0);
+    let origin = Point(0, 0, 0);
+}
+```
+
+#### unit-like struct
+
+-   유닛, ()처럼 동작하는 struct로 필드가 없다.
+-   특정 타입에 트레이트를 구현할 거지만 그에 수반 되는 데이터가 없을 때 유용하다.
+
+```rust
+struct AlwaysEqual;
+
+fn main() {
+    let subject = AlwaysEqual;
+}
+```
+
+> `println!`과 `Debug` 트레이트
+>
+> -   struct는 `println!`의 `{}`로 출력 할 수 없다.
+> -   이는 struct가 `std::fmt::Display`를 구현하지 않았기 때문이다.
+> -   struct를 어떻게 보여줄지는 사람마다 다양한 의견이 있을 수 있기에 그런 것이다.
+> -   이 경우, 컴파일러가 `{:?}`나 `{:#?}` 같은 플레이스 홀더를 권하는 걸 볼 수 있다. 후자는 줄도 바꾸는등 조금 더 이쁘게 보여준다.
+> -   하지만 이 것도 사용하기 위해서는 struct가 `Debug` 트레이트를 구현해야한다.
+>
+> ```rust
+> #[derive(Debug)]
+> struct Rectangle {
+>    width: u32,
+>    height: u32,
+> }
+>
+> fn main() {
+>   let rect1 = Rectangle {
+>       width: 30,
+>       height: 50,
+>   };
+>    println!("rect1 is {:?}", rect1);
+> // rect1 is Rectangle { width: 30, height: 50 }
+> }
+> ```
+>
+> -   위처럼 derive 어트리뷰트를 사용해 구현할 수 있다.
+
+> `dbg!` 매크로
+>
+> -   이외에도 `dbg!` 매크로가 존재한다.
+> -   주의할 점은 이 매크로는 `println!`과는 다르게 파라미터의 소유권을 가져간다는 것이다(레퍼런스를 쓰는 버전도 있다).
+> -   그외에도 stderr로 출력된다는 점이 다르다.
+> -   소스의 라인까지 출력된다.
+>
+> ```
+> [src/main.rs:10] 30 * scale = 60
+> [src/main.rs:14] &rect1 = Rectangle {
+>     width: 60,
+>     height: 50,
+> }
+> ```
+
+#### 메서드
+
+-   `impl` 블록 내에 정의한다. `impl`을 여러군데 사용할 수도 있다.
+-   첫 파라미터는 `&self`로 나타내며, 이는 `self: &Self`를 나타낸다. 물론 레퍼런스를 안 쓸 수도 있지만 그 경우, 예외 없이 소유권이 넘어간다. 이런 경우는 굉장히 드문 상황이다. 보통 메서드가 self를 다른 걸로 바꾸고 호출한 측에서 원래 인스턴스를 못 쓰게 막는 경우에 쓰인다.
+-   메서드의 이름은 필드와 동일할 수 있다. 메서드와 필드는 호출시 `()`로 구분할 수 있기 때문이다. 보통 `getter`를 정의할 때 쓰인다.
+
+```rust
+#[derive(Debug)]
+struct Rectangle {
+    width: u32,
+    height: u32,
+}
+
+impl Rectangle {
+    fn area(&self) -> u32 {
+        self.width * self.height
+    }
+}
+
+fn main() {
+    let rect1 = Rectangle {
+        width: 30,
+        height: 50,
+    };
+
+    println!(
+        "The area of the rectangle is {} square pixels.",
+        rect1.area()
+    );
+}
+```
+
+#### associated function
+
+-   `impl` 내에 정의된 모든 함수는 `associated function`이라고 부른다.
+-   메서드는 이중 첫 파라미터로 `self`를 갖는 함수다.
+-   메서드가 아닌 associated function은 `self`를 첫 파라미터로 갖지 않는다. `String::from`이 그 예시중 하나이며 보통 이렇게 새 인스턴스를 만드는 생성자에 쓰인다. 보통 `new`라고 부른다. 하지만 `new`는 언어의 키워드가 아니므로 이름에 제한은 없다.
+-   `Self` 키워드는 `impl` 다음에 쓰여진 타입을 의미한다.
+-   이런 함수를 호출하기 위해서는 `Rectangle::square(3)`처럼 `::`를 사용해야한다.
+
+```rust
+impl Rectangle {
+    fn square(size: u32) -> Self {
+        Self {
+            width: size,
+            height: size,
+        }
+    }
+}
+```
+
+### enum
+
+-   기본적으로는 아래처럼 사용한다.
+-   enum의 가능한 각 값을 `variant`라고 부른다.
+
+```rust
+enum IpAddrKind {
+    V4,
+    V6,
+}
+
+fn main() {
+    let four = IpAddrKind::V4;
+    let six = IpAddrKind::V6;
+
+    route(IpAddrKind::V4);
+    route(IpAddrKind::V6);
+}
+
+fn route(ip_kind: IpAddrKind) {}
+```
+
+-   rust의 enum은 이 이상으로 특별하다. 바로 각 variant가 값을 가질 수 있다는 점이다.
+-   심지어 각 variant의 타입이 같지 않아도 된다.
+
+```rust
+fn main() {
+    enum IpAddr {
+        V4(u8, u8, u8, u8),
+        V6(String),
+    }
+
+    let home = IpAddr::V4(127, 0, 0, 1);
+
+    let loopback = IpAddr::V6(String::from("::1"));
+}
+```
+
+```rust
+enum Message {
+    Quit,
+    Move { x: i32, y: i32 },
+    Write(String),
+    ChangeColor(i32, i32, i32),
+}
+```
+
+-   심지어 메서드도 추가할 수 있다.
+
+```rust
+fn main() {
+    impl Message {
+        fn call(&self) {
+            // method body would be defined here
+        }
+    }
+
+    let m = Message::Write(String::from("hello"));
+    m.call();
+}
+```
+
+#### Result
+
+-   `OK`와 `Err`의 값을 지니며 `expect` 메서드를 가지고 있음.
+-   `expect`는 Result의 값이 `Err`일 때 인자로 건넨 메시지를 출력하고 프로그램을 죽임.
+
+#### Option
+
+-   rust는 null이 없다. 이는 프로그래머들이 은연중에 null을 `유효하지 않은 상태`로 생각하지 않고 하나의 값으로 여기는 문제에서 벗어나기 위한 언어 디자인적인 선택이다.
+-   rust의 표준라이브러리는 이에 대해 `Option`이라는 enum을 제공한다. 이는 prelude에 포함 되어있으므로 따로 임포트하지 않아도 된다.
+-   `None`은 null 본연의 의미인 상태(값)의 부재를 나타내고, `Some`은 상태가 존재함을 나타낸다.
+-   타입 파라미터 자체인 `T`와 `Some<T>`는 다른 타입이므로 둘 사이에 연산은 불가능하다.
+-   값을 다루기위해서는 `unwrap()`메서드도 있지만, 대부분의 경우 `match`를 이용한 패턴 매칭을 주로 쓴다.
+
+```rust
+#![allow(unused)]
+enum Option<T> {
+    None,
+    Some(T),
+}
+
+fn main() {
+    let some_number = Some(5);
+    let some_char = Some('e');
+
+    let absent_number: Option<i32> = None;
+}
+```
 
 ### match
 
 -   패턴 매칭표현식
+-   패턴은 리터럴, 변수 이름, 와일드 카드 등으로 이루어진다.
+-   `_`은 catch-all 패턴이다. 디폴트 케이스를 정의할 때 쓰인다. 사실 마지막 패턴에 아무 이름이나 줘도 똑같이 동작한다.
+-   패턴이 매칭 되어도 아무것도 하고 싶지 않을 때는 ()을 쓴다.
 -   `arm`으로 이루어짐
 -   `match` `[enumreation을 리턴하는 표현식]` {`arm 목록`}의 형식으로 이루어진다.
+-   `if`와는 다르게 boolean이 아닌 패턴도 사용할 수 있다.
+-   모든 패턴을 기술해야한다(exhaustive match).
 
 ```rust
-    match guess.cmp(&secret_number) {
-        Ordering::Less => println!("Too small!"),
-        Ordering::Greater => println!("Too big!"),
-        Ordering::Equal => println!("You win!"),
+#[derive(Debug)]
+enum UsState {
+    Alabama,
+    Alaska,
+    // --snip--
+}
+
+enum Coin {
+    Penny,
+    Nickel,
+    Dime,
+    Quarter(UsState),
+}
+
+fn value_in_cents(coin: Coin) -> u8 {
+    match coin {
+        Coin::Penny => 1,
+        Coin::Nickel => 5,
+        Coin::Dime => 10,
+        Coin::Quarter(state) => {
+            println!("State quarter from {:?}!", state);
+            25
+        }
     }
-```
+}
 
-#### arm
-
--   패턴과 패턴 일치 시 실행될 코드로 이루어짐
-
-```rust
-let guess = 12;
-let secret_number = 14;
-match guess.cmp(&secret_number) {
-    Ordering::Less => println!("Too small!"),
-    Ordering::Greater => println!("Too big!"),
-    Ordering::Equal => println!("You win!"),
+fn main() {
+    value_in_cents(Coin::Quarter(UsState::Alaska));
 }
 ```
 
-> 1. `cmp`가 `Ordering::Less`를 리턴
-> 2. `match` 표현식이 `Ordering::Less` 값을 가지고 각 `arm`의 패턴을 체크
-> 3. 첫번째 `arm`의 패턴과 일치하므로 "Too small!" 출력
-
 ```rust
-let guess: u32 = match guess.trim().parse() {
-    Ok(num) => num,
-    Err(_) => continue,
-};
+fn main() {
+    let dice_roll = 9;
+    match dice_roll {
+        3 => add_fancy_hat(),
+        7 => remove_fancy_hat(),
+        _ => (),
+    }
+
+    fn add_fancy_hat() {}
+    fn remove_fancy_hat() {}
+}
 ```
 
-> `_`는 catchall 값.
+### if let
 
-이렇게 무척 편리하게 사용할 수 있다.
-
-### 문자열 보간
-
--   표현식을 사용할 때는 `{}`처럼 비워둔다.
-
-```rust
-let x = 5;
-let y = 5;
-println!("x is {x}");
-println!("x = {} and y = {}", x, y)
-```
-
-### range expression
-
--   start..=end(inclusive)
+-   `match`에 대한 대용으로 `if let`도 존재한다. 보통 한 패턴만 유효할 때 간략한 표현을 위해 이 문법을 쓴다.
+-   하지만 `macth`처럼 모든 경우를 체크하진 않는다.
+-   그냥 syntatic sugar정도로 생각하면 된다.
+-   else도 쓸 수 있는데 굳이?
 
 ```rust
-let ran_num = rand::thread_rng().gen_range(1..=100);
+fn main() {
+    let config_max = Some(3u8);
+    //  match config_max {
+    //    Some(max) => println!("The maximum is configured to be {}", max),
+    //    _ => (),
+    //}
+    if let Some(max) = config_max {
+        println!("The maximum is configured to be {}", max);
+    }
+}
 ```
+
+### 프로젝트 관리(모듈 시스템)
+
+#### 크레이트(crate)
+
+-   컴파일러가 한 번에 인식할 수 있는 가장 작은 코드 단위
+-   하나의 소스 파일을 컴파일러에 던져도 컴파일러는 해당 파일을 크레이트라고 인식한다.
+-   `바이너리 크레이트`와 `라이브러리 크레이트`가 존재한다.
+    -   바이너리 크레이트는 말 그대로 실행할 수 있는 바이너리 파일이다. `main`함수를 포함한다.
+    -   라이브러리 크레이트는 다수의 프로젝트에서 공유하는 소스가 정의 되어있다. `main`함수를 포함하지 않으며 실행파일도 만들지 않는다. 일반적으로 크레이트는 이 라이브러리 크레이트를 의미한다. 라이브러리라고도 부른다.
+-   크레이트의 루트는 컴파일러의 시작점이 되는 소스파일이며 이를 통해 크레이트의 루트 모듈을 생성한다.
+
+#### 패키지(package)
+
+-   하나 이상의 크레이트륾 모아놓은 것을 패키지라고 한다.
+-   `Cargo.toml` 파일을 포함한다. 이 파일은 크레이트를 어떻게 빌드할지에 대해 기술하고 있다.
+-   `Cargo` 그 자체도 CLI 바이너리 크레이트를 포함한 패키지다. 이에 추가적으로 의존하는 라이브러리 크레이트도 포함하고 있다. 다른 프로젝트도 Cargo의 라이브러리 크레이트를 사용할 수 있다.
+-   패키지는 적어도 하나의 크레이트를 포함해야 한다. 다수의 바이너리 크레이트를 포함할 수 있지만, 라이브러리 크레이트는 최대 한 개까지만 포함할 수 있다.
+-   Cargo는 *src/main.rs*를 바이너리 크레이트의 루트로, *src/lib.rs*를 라이브러리 크레이트의 루트로 인식한다. 이 루트가 `rustc`로 건네져 컴파일이 시작 된다.
+-   만약 패키지가 *src/main.rs*와 *src/lib.rs*를 동시에 가지고 있다면 바이너리와 라이브러리, 총 두 개의 크레이트를 가진 것이며 그 크레이트의 이름은 패키지와 동일하다.
+-   패키지는 또한 *src/bin*에 다수의 바이너리 크레이트를 포함할 수 있다.
+
+> 패키지가 바이너리 크레이트와 라이브러리 크레이트를 동시에 포함한 경우, 바이너리 크레이트가 마치 라이브러리 크레이트를 외부 패키지처럼 사용하는 방식으로 코딩을 할 것을 권장한다.
+
+#### 모듈 시스템 요약
+
+-   크레이트 루트부터 시작: 크레이트를 컴파일할 때 컴파일러는 일단 크레이트 루트(*src/main.rs*와 _src/lib.rs_)을 확인한다.
+-   모듈 선언: 크레이트 루트 파일에 새 모듈을 선언할 수 있다. 가령, "garden" 모듈을 `mod garden;`으로 선언했다고 해보자. 컴파일러는 다음에서 모듈의 코드를 찾는다.
+    -   인라인, `mod garden` 뒤의 세미콜론을 대체하는 중괄호 내
+    -   _src/garden.rs_
+    -   _src/garden/mod.rs_
+-   서브모듈 선언: 크레이트 루트가 아닌 파일에서 서브모듈은 선언할 수 있다. 가령, `mod vegetables;`를 *src/garden.rs*에 선언한다고 해보자. 컴파일러는 서브모듈의 코드를 다음에서 찾는다.
+    -   인라인, `mod vegetables;` 다음, 세미콜론 대신 중괄호 내
+    -   _src/garden/vegetables.rs_
+    -   _src/garden/vegetables/mod.rs_
+-   모듈 내 패스: 모듈이 크레이트의 일부라면 모듈 내 코드를 크레이트 어디에서든 참조할 수 있다. 물론, 프라이버시 규칙을 따라야한다(private, publc). 가령, garden -> vegetables 모듈 내의 `Asparagus`는 `crate::garden::vegetables::Asparagus`로 찾을 수 있다.
+-   private vs public: 모듈 내 코드는 기본적으로 부모에게는 private이다. 모듈을 public으로 만들기 위해서는 `pub mod`로 선언해야한다. public 모듈 내의 아이템을 public으로 만들기 위해서는 `pub`을 사용한다.
+-   `use` 키워드: 스코프 내에서 `use` 키워드는 모듈의 긴 패스를 짧게 쓸수 있게 해준다. 가령, `use crate::garden::vegetables::Asparagus;`를 쓰면 스코프 내에서 `Asparagus`만으로 해당 아이템을 참조할 수 있다.
+
+```
+backyard
+├── Cargo.lock
+├── Cargo.toml
+└── src
+    ├── garden
+    │   └── vegetables.rs
+    ├── garden.rs
+    └── main.rs
+```
+
+```rust
+// src/marin.rs
+use crate::garden::vegetables::Asparagus;
+
+//컴파일러에게 src/garden.rs를 포함하라고 지시한다.
+pub mod garden;
+
+fn main() {
+    let plant = Asparagus {};
+    println!("I'm growing {:?}!", plant);
+}
+```
+
+```rust
+// src/garden.rs
+//컴파일러에게 src/garden/vegetables.rs를 포함하라고 지시한다.
+pub mod vegetables;
+```
+
+```rust
+// src/garden/vegetables.rs
+#[derive(Debug)]
+pub struct Asparagus {}
+```
+
+#### 모듈(module)
+
+-   모듈 내 코드는 기본적으로 private.
+
+```rust
+// src/lib.rs
+mod front_of_house {
+    mod hosting {
+        fn add_to_waitlist() {}
+
+        fn seat_at_table() {}
+    }
+
+    mod serving {
+        fn take_order() {}
+
+        fn serve_order() {}
+
+        fn take_payment() {}
+    }
+}
+```
+
+-   루트의 이름은 **crate**가 된다.
+-   아래와 같은 모듈 트리가 그려진다.
+
+```
+crate
+ └── front_of_house
+     ├── hosting
+     │   ├── add_to_waitlist
+     │   └── seat_at_table
+     └── serving
+         ├── take_order
+         ├── serve_order
+         └── take_payment
+
+```
+
+#### 패스(path)
+
+-   절대 경로는 crate부터 시작하며 상대 경로도 지원한다. 외에 `self`나 `super` 같은 키워드도 존재한다.
+-   각 패스는 `::`로 구분된다.
+
+```rust
+mod front_of_house {
+    mod hosting {
+        fn add_to_waitlist() {}
+    }
+}
+// 모든 자식은 그 부모에겐 private이다.
+// 하지만 자식은 부모의 모든 게 public이다.
+pub fn eat_at_restaurant() {
+    // Absolute path
+    crate::front_of_house::hosting::add_to_waitlist();
+                         //^^^^^^^ private module
+
+    // Relative path
+    front_of_house::hosting::add_to_waitlist();
+                    //^^^^^^^ private module
+}
+```
+
+```rust
+mod front_of_house {
+    pub mod hosting {
+        fn add_to_waitlist() {}
+    }
+}
+
+pub fn eat_at_restaurant() {
+    // Absolute path
+    crate::front_of_house::hosting::add_to_waitlist();
+                                  //^^^^^^^^^^^^^^ private function
+
+
+    // Relative path
+    front_of_house::hosting::add_to_waitlist();
+                           //^^^^^^^^^^^^^^ private function
+
+}
+```
+
+```rust
+//정상 동작
+mod front_of_house {
+    pub mod hosting {
+        pub fn add_to_waitlist() {}
+    }
+}
+
+pub fn eat_at_restaurant() {
+    // Absolute path
+    crate::front_of_house::hosting::add_to_waitlist();
+
+    // Relative path
+    front_of_house::hosting::add_to_waitlist();
+}
+```
+
+```rust
+fn deliver_order() {}
+
+mod back_of_house {
+    fn fix_incorrect_order() {
+        cook_order();
+        super::deliver_order();
+    }
+
+    fn cook_order() {}
+}
+```
+
+#### `pub`과 struct/enum
+
+-   struct를 `pub`으로 선언해도 그 필드는 여전히 private이다. 노출하려면 따로 pub을 써주어야한다.
+-   enum은 그 varaint들도 publc이 된다.
+
+#### `use`
+
+```rust
+mod front_of_house {
+    pub mod hosting {
+        pub fn add_to_waitlist() {}
+    }
+}
+
+use crate::front_of_house::hosting;
+
+pub fn eat_at_restaurant() {
+    hosting::add_to_waitlist();
+}
+```
+
+-   `use`는 특정 스코프에서만 동작한다. 그러므로 아래와 같은 코드는 유효하지 않다.
+
+```rust
+mod front_of_house {
+    pub mod hosting {
+        pub fn add_to_waitlist() {}
+    }
+}
+
+//use가 customer 안으로 들어가야한다.
+use crate::front_of_house::hosting;
+
+mod customer {
+    pub fn eat_at_restaurant() {
+        hosting::add_to_waitlist();
+    }
+}
+```
+
+-   일반적인 용례는 함수인 경우는 위처럼 모듈까지만 쓰고, struct나 enum의 경우에는 절대 경로를 전부 사용한다.
+
+```rust
+use std::collections::HashMap;
+
+fn main() {
+    let mut map = HashMap::new();
+    map.insert(1, 2);
+}
+```
+
+-   `as`로 모듈에 새 이름을 줄 수도 있다.
+
+```rust
+use std::fmt::Result;
+use std::io::Result as IoResult;
+
+fn function1() -> Result {
+    // --snip--
+    Ok(())
+}
+
+fn function2() -> IoResult<()> {
+    // --snip--
+    Ok(())
+}
+```
+
+#### `pub use`로 다시 익스포트 하기(re-exporting)
+
+```rust
+mod front_of_house {
+    pub mod hosting {
+        pub fn add_to_waitlist() {}
+    }
+}
+
+//front_of_houser::hosting을 외부로 다시 익스포트
+pub use crate::front_of_house::hosting;
+
+pub fn eat_at_restaurant() {
+    hosting::add_to_waitlist();
+}
+```
+
+#### 외부 패키지 사용하기
+
+-   `Cargo.toml`의 의존성으로 작성하여 패키지를 포함한다.
+-   그리고 `use`로 사용한다.
+-   `std`도 마찬가지다.
+
+#### 부모까지 패스가 같은 모듈
+
+```rust
+use std::cmp::Ordering;
+use std::io;
+
+//아래로 묶을 수 있다.
+use std::{cmp::Ordering, io};
+/////////////////////////////////////////
+use std::io;
+use std::io::Write;
+
+//아래로 묶을 수 있다.
+use std::io::{self, Write};
+```
+
+#### `glob` 연산자
+
+-   주로 테스팅용으로 쓴다.
+
+```rust
+//std::collections 밑에 public 아이템을 다 가져온다.
+use std::collections::*;
+```
+
+#### 파일로 분리
+
+-   `mod` 선언은 모듈 트리 내에서 단 한번만 이루어진다. 그러니까 `mod`는 `include`가 아니다. 그러니까 C++에서 볼법한 인클루드 가드 같은 건 필요 없다.
+-   `mod.rs`로 분리하는 법도 있긴한데 오래된 스타일로 요즘엔 안 쓰는 것 같다. 두 스타일을 같이 안 쓰는게 좋다. 그리고 `mod.rs`로 도배된 프로젝트라니 끔찍하다.
+
+```rust
+//src/lib.rs
+mod front_of_house;
+
+pub use crate::front_of_house::hosting;
+
+pub fn eat_at_restaurant() {
+    hosting::add_to_waitlist();
+}
+
+//src/front_of_house.rs
+pub mod hosting;
+
+//src/front_of_house/hosting.rs
+pub fn add_to_waitlist() {}
+```
+
+### 컬렉션
+
+-   빌트인으로 제공 되는 컴파운드 타입(배열, 튜플)이 아니라 스탠다드 라이브러리가 제공하는 컬렉션.
+
+#### Vec<T>
+
+-   동적 배열.
+-   `new`로 인스턴스를 만들지만, `vec!` 매크로를 써서 배열처럼 선언할 수도 있다.
+-   인덱스나 `get` 메서드로 엘레멘트에 접근이 가능하다. 전자는 `&T`를 그대로 얻지만, 후자는 `Option<&T>`를 얻는다. 전자의 경우, 레퍼런스를 빼고 `T`를 얻으려할 경우, 소유권이 이동한다면 컴파일이 되지 않는다.
+-   벡터 자체가 드랍될 때 안에 엘레멘트들도 드랍된다.
+
+```rust
+fn main() {
+    //값을 넣지 않았기에 컴파일러가 추론할 수 없어 타입을 명시해주었다.
+    //값이 이있으면 굳이 안 써도 된다.
+    let v1: Vec<i32> = Vec::new();
+    let v2 = vec![1, 2, 3];
+}
+```
+
+```rust
+    let mut v = Vec::new();
+    v.push(5);
+    v.push(6);
+    v.push(7);
+    v.push(8);
+```
+
+```rust
+fn main() {
+    let v = vec![1, 2, 3, 4, 5];
+
+    let third: &i32 = &v[2];
+    println!("The third element is {third}");
+
+    let third: Option<&i32> = v.get(2);
+    match third {
+        Some(third) => println!("The third element is {third}"),
+        None => println!("There is no third element."),
+    }
+}
+```
+
+```rust
+fn main() {
+    let v = vec![1, 2, 3, 4, 5];
+
+    //패닉에 빠진다.
+    let does_not_exist = &v[100];
+    //None이 된다.
+    let does_not_exist = v.get(100);
+}
+```
+
+```rust
+fn main() {
+    let mut v = vec![1, 2, 3, 4, 5];
+
+    let first = &v[0];
+    // first 불변 레퍼런스가 유효하므로 에러가 난다.
+    v.push(6);
+
+    println!("The first element is: {first}");
+}
+```
+
+```rust
+    let v = vec![100, 32, 57];
+
+    for i in &v {
+        println!("{i}");
+    }
+
+    for i in &mut v {
+        //가변 레퍼런스 수정을 위해서 '*' 연산자가 필요하다.
+        *i += 50;
+    }
+```
+
+```rust
+fn main() {
+    enum SpreadsheetCell {
+        Int(i32),
+        Float(f64),
+        Text(String),
+    }
+    //enum도 문제 없다.
+    let row = vec![
+        SpreadsheetCell::Int(3),
+        SpreadsheetCell::Text(String::from("blue")),
+        SpreadsheetCell::Float(10.12),
+    ];
+}
+```
+
+#### String
+
+-   코어의 `str`이 아닌, 스탠다드 라이브러리가 제공하는 동적인 문자열 타입.
+-   UTF-8로 파싱
+-   만드는데는 `new`, `to_string`, `from` 등의 방법이 있다.
+-   업데이트할 때는 `pust_str`같은 메서드를 쓰거나, `+` 연산을 쓰거나, `format!` 매크로를 쓰는등 여러 방법이 있다.
+-   `+` 연산자의 경우, 앞에 오퍼랜드의 경우 소유권을 취하고, 뒤의 오퍼랜드는 레퍼런스를 받는다. 그래서 앞의 변수는 무효화 된다. 전자의 소유권을 받아 후자를 추가한다음 전자의 소유권을 다시 리턴값으로 돌려주는 셈이다.
+-   만일 여러 문자열을 이어붙일 때 `+`를 쓴다면 골치아플 수 있다. 이 때는 `format!` 매크로를 쓴다.
+-   컴파일러는 `&String`을 `&str`로 만들어 버릴 수 있다. 이런 동작을 `deref coercion`이라고 한다.
+
+```rust
+    let mut s1 = String::new();
+
+    let data = "initial contents";
+    let s2 = data.to_string();
+    let s3 = String::from("initial contents");
+```
+
+```rust
+fn main() {
+    let mut s = String::from("foo");
+    s.push_str("bar");
+
+    let mut s1 = String::from("foo");
+    let s2 = "bar";
+    //소유권을 취하지 않는다. &str을 받기 때문
+    s1.push_str(s2);
+    println!("s1 is {s1}");
+
+    let mut s = String::from("lo");
+    //단일 문자 추가
+    s.push('l');
+}
+```
+
+```rust
+fn main() {
+    let s1 = String::from("Hello, ");
+    let s2 = String::from("world!");
+    let s3 = s1 + &s2; // s1의 소유권이 날아간다.
+}
+```
+
+```rust
+fn main() {
+    let s1 = String::from("tic");
+    let s2 = String::from("tac");
+    let s3 = String::from("toe");
+    //앞의 오퍼랜드의 소유권이 날아가므로 s1에만 영향을 미친다.
+    let s = s1 + "-" + &s2 + "-" + &s3;
+}
+```
+
+```rust
+fn main() {
+    let s1 = String::from("tic");
+    let s2 = String::from("tac");
+    let s3 = String::from("toe");
+    //소유권은 유지된다.
+    let s = format!("{s1}-{s2}-{s3}");
+}
+```
+
+-   문자열은 엘레멘트에 대해 접근을 지원하지 않는다. 애초에 인덱스 자체가 구현이 되어있지 않다. 구현상 `String`은 `Vec<u8>`의 래퍼이지만, 문자열 자체가 `UTF-8`로 인코딩 되기 때문이다. 전체가 아스키로 표현 되어 1바이트로 표현 가능한 `String::from("Hola")`의 길이는 4이지만, 표현 범위가 1바이트를 넘어가는 `String::from("Здравствуйте")`의 경우, 그 길이가 24 바이트로 평가된다. 이 때문에 벡터처럼 인덱싱을 해도 정상적인 값을 얻어오지 못할 확률이 크다. 그렇기에 엘레멘트에 대한 인덱싱을 지원하지 않는 것이다.
+
+> 키릴문자의 경우, 그 범위가 UTF-16 기준으로 0400-04FF이므로 2바이트로 표현 되는 것이다.
+
+```rust
+    //지스드라브스드부이데?
+    let hello = "Здравствуйте";
+    let answer = &hello[0]; //UTF-8 기준으로 0xD09E 전체가 아니라 0xD0만을 얻어올 것이다.
+```
+
+-   rust는 문자열을 세가지 관점에서 볼 수 있다. 바이트 모음, 스칼라 모음, 그리고 grapheme(문자의최소 단위) 모음이다. 이런 여러 관점이 있기에 인덱싱을 허용하지 않는다.
+
+```rust
+    let namaste = "नमस्ते";
+    //as bytes(real data stored in computers)
+    [224, 164, 168, 224, 164, 174, 224, 164, 184, 224, 165, 141, 224, 164, 164,
+224, 165, 135]
+
+    //as char(unicode scalar)
+    //이중 네번째랑, 여섯번째는 힌디 글자가 아니라 문법적인 요소란다...
+    ['न', 'म', 'स', '्', 'त', 'े']
+
+    //as grapheme clusters
+    //문법적인 요소인 네번째랑 여섯번째가 병합 되었다.
+    ["न", "म", "स्", "ते"]
+```
+
+-   인덱싱을 지원하지 않는 이유는 인덱싱이 위 같은 이유들로 인해 항상 `O(1)`의 성능을 보장할 수 없기 때문이다.
+-   그러니 문자열 인덱싱은 포기하자.
+
+```rust
+fn main() {
+    let hello = "Здравствуйте";
+
+    let s = &hello[0..1];
+    //thread 'main' panicked at 'byte index 1 is not a char boundary
+    //친절하게 컴파일러가 잡아준다.
+    print!("{}", s)
+}
+```
+
+-   그래도 써야할 때는 조심히 슬라이스하거나 다음 방법을 쓴다. grapheme cluster는 스탠다드 라이브러리로는 지원 안한다. 화이팅.
+    -   유니코드 스칼라: `chars()`
+    -   바이트: `bytes()`
+
+```rust
+fn main() {
+    for c in "피카츄".chars() {
+        print!("{c} ");
+    }
+    println!("");
+    for c in "피카츄".bytes() {
+        print!("{c} ");
+    }
+}
+//피 카 츄
+//237 148 188 236 185 180 236 184 132
+```
+
+#### HashMap
+
+-   해쉬맵. Vec이나 String과는 다르게 prelude에 포함이 안 되어있어 use로 임포트 해주어야 한다. 별도의 매크로도 없다.
+-   `insert()`로 멤버를 추가하거나 업데이트 된다. 이미 키가 있으면 해당 키의 값이 업데이트 되니 주의해야한다.
+-   `entry()`는 키가 없을 때 값을 추가할 수 있는 메서드다. 호출하면 `Entry` enum을 리턴한다. 이 enum은 값이 존재하는지 아닌지를 판단하는데 쓰인다.
+-   해싱 함수로 SipHash라는 알고리즘을 쓴다. 가장 빠른 알고리즘은 아니지만, DoS 공격을 견딜 수 있는 알고리즘이라고 한다. 만약 빠른 알고리즘으로 교체하고 싶다면 별도의 `hasher`를 지정한다. 많은 알고리즘이 레포지토리에 있다고 한다.
+
+```rust
+fn main() {
+    use std::collections::HashMap;
+
+    let mut scores = HashMap::new();
+
+    scores.insert(String::from("Blue"), 10);
+    scores.insert(String::from("Yellow"), 50);
+
+    let team_name = String::from("Blue");
+    //get은 Option<T>를 리턴한다.
+    let score = scores.get(&team_name).copied().unwrap_or(0);
+
+    for (key, value) in &scores {
+        println!("{key}: {value}");
+    }
+}
+```
+
+```rust
+    use std::collections::HashMap;
+
+    let field_name = String::from("Favorite color");
+    let field_value = String::from("Blue");
+
+    let mut map = HashMap::new();
+    map.insert(field_name, field_value);
+    //소유권이 넘어간다. field_name, field_value는 무효화 된다.
+```
+
+```rust
+fn main() {
+    use std::collections::HashMap;
+
+    let mut scores = HashMap::new();
+
+    scores.insert(String::from("Blue"), 10);
+    scores.insert(String::from("Blue"), 25);
+    //25로 덧씌워진다.
+    println!("{:?}", scores);
+}
+```
+
+```rust
+fn main() {
+    use std::collections::HashMap;
+
+    let mut scores = HashMap::new();
+    scores.insert(String::from("Blue"), 10);
+
+    scores.entry(String::from("Yellow")).or_insert(50);
+    scores.entry(String::from("Blue")).or_insert(50);
+
+    println!("{:?}", scores);
+}
+```
+
+```rust
+fn main() {
+    use std::collections::HashMap;
+
+    let text = "hello world wonderful world";
+
+    let mut map = HashMap::new();
+
+    //이런 활용도 가능하다.
+    for word in text.split_whitespace() {
+        let count = map.entry(word).or_insert(0);
+        *count += 1;
+    }
+
+    println!("{:?}", map);
+}
+```
+
+### 에러 핸들링
+
+-   rust의 에러는 복구 가능한 것과 복구 불가능한 것으로 나뉜다. 전자는 파일을 찾을 수 없는 등의 것이고, 후자는 배열의 범위를 벗어난 인덱스 참조처럼 프로그램을 즉각 종료해야하는 같은 심각한 것이다.
+-   대부분의 언어가 예외라는 매커니즘으로 이를 구분하지 않는다. rust는 예외가 없다. 대신 복구 가능한 에러에 대해서는 `Result<T,E>`가, 복구 불가능한 에러에 대해서는 `panic!` 매크로가 존재한다.
+-   추가적으로 backtrace라는 걸 확인할 수 있는데 조금더 자세하게 원인 내역을 볼 수 있다. 디버그 빌드에서만 동작하고, `RUST_BACKTRACE` 환경변수 값을 설정해야한다. 0, 1, 그리고 full의 값을 가질 수 있다.
+
+#### 복구 불가능한 에러와 `panic!`
+
+-   `panic!`이 호출 되는 경우는 다음 두 가지가 있다.
+    -   배열 범위를 벗어난 인덱스를 참조하는등의 패닉을 유발하는 코드
+    -   명시적으로 `panic!` 호출
+-   패닉이 벌어지면 실패 메시지를 출력하고, 스택을 정리하고, 프로그램을 종료한다. 환경변수를 통해 콜스택 같은 정보를 확인할 수도 있다.
+
+> 스택을 정리할 때 스택을 되감는(unwinding) 동작이 발생하는데 이는 굉장히 무거운 동작이다. 빌드할 때 이를 발생 시키지 않는 방법이 있다. 바로 `Cargo.toml`에 다음을 추가해주는 것이다.
+>
+> ```
+> [profile.release]
+> panic = 'abort'
+> ```
+>
+> 이러면 패닉이 발생했을 때 즉각 프로그램이 종료 된다. 그렇게 되면 OS가 프로그램의 메모리를 정리해야하지만 바이너리의 크기가 줄어드는 효과도 있다.
+
+```rust
+fn main() {
+    panic!("crash and burn");
+}
+/// thread 'main' panicked at 'crash and burn', src/main.rs:2:5
+```
+
+```rust
+fn main() {
+    let v = vec![1, 2, 3];
+
+    v[99];
+}
+// thread 'main' panicked at 'index out of bounds: the len is 3 but the index is 99', src/main.rs:4:5
+```
+
+#### 복구 가능한 에러와 `Result`
