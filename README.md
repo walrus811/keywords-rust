@@ -43,6 +43,7 @@ $ cargo run # 빌드와 실행을 하는 올인원 커맨드
 $ cargo check # 코드가 컴파일 될 수 있는지 빠르게 체크하지만, 결과물은 만들지 않는다.
 $ cargo update # 프로젝트 내 crate 버전 업데이트, lock 파일을 무시하고 'cago.toml' 내 버전으로 lock 파일을 최신화한다.
 $ cargo doc [--open] # 프로젝트 내 포함된 의존성 문서를 만든다.
+$ cargo [커맨드] -- [cargo가 아닌 프로그램의 아규먼트]
 ```
 
 #### cargo 프로젝트 구조
@@ -82,7 +83,9 @@ $ cargo doc [--open] # 프로젝트 내 포함된 의존성 문서를 만든다.
 -   이름 뒤에 `!`가 붙음
 
 ```rust
-println!("Hello world!")
+println!("Hello world!");
+eprintln!("Hello world!");
+dbg!("dgggg");
 ```
 
 ### indent
@@ -1129,6 +1132,12 @@ fn main() {
 
 ### 프로젝트 관리(모듈 시스템)
 
+#### 가이드라인
+
+-   *lib.rs*에 기능을 넣고, 그 기능을 *main.rs*가 사용하는 형식으로 개발
+-   세팅을 제외한 전체 로직은 *lib.rs*에 러너함수를 만들어서 쓴다.
+-   *lib.rs*에 테스트 코드
+
 #### 크레이트(crate)
 
 -   컴파일러가 한 번에 인식할 수 있는 가장 작은 코드 단위
@@ -1140,7 +1149,7 @@ fn main() {
 
 #### 패키지(package)
 
--   하나 이상의 크레이트륾 모아놓은 것을 패키지라고 한다.
+-   하나 이상의 크레이트를 모아놓은 것을 패키지라고 한다.
 -   `Cargo.toml` 파일을 포함한다. 이 파일은 크레이트를 어떻게 빌드할지에 대해 기술하고 있다.
 -   `Cargo` 그 자체도 CLI 바이너리 크레이트를 포함한 패키지다. 이에 추가적으로 의존하는 라이브러리 크레이트도 포함하고 있다. 다른 프로젝트도 Cargo의 라이브러리 크레이트를 사용할 수 있다.
 -   패키지는 적어도 하나의 크레이트를 포함해야 한다. 다수의 바이너리 크레이트를 포함할 수 있지만, 라이브러리 크레이트는 최대 한 개까지만 포함할 수 있다.
@@ -1790,3 +1799,755 @@ fn main() {
 ```
 
 #### 복구 가능한 에러와 `Result`
+
+-   파일을 읽으려는데 파일이 없는등 그렇게 심각하지 않은 에러.
+-   `Result<T,E>` enum이 제공된다.
+-   match를 써서 처리해도 되지만 `Result<T,E>`가 제공하는 메서드(`unwrap`,`expect`)를 사용하면 더 깔끔하다. 전자는 결과가 Ok인 경우,그 값을 리턴하고 아니면 `panic!`을 호출한다. 후자는 비슷하게 동작하지만 파라미터로 조금 더 상세한 메시지를 건넬 수 있다. 대부분 후자를 쓰는 게 더 낫다.
+
+```rust
+#![allow(unused)]
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+```
+
+```rust
+use std::fs::File;
+use std::io::ErrorKind;
+
+fn main() {
+    let greeting_file_result = File::open("hello.txt");
+
+    let greeting_file = match greeting_file_result {
+        Ok(file) => file,
+        Err(error) => match error.kind() {
+            ErrorKind::NotFound => match File::create("hello.txt") {
+                Ok(fc) => fc,
+                Err(e) => panic!("Problem creating the file: {:?}", e),
+            },
+            other_error => {
+                panic!("Problem opening the file: {:?}", other_error);
+            }
+        },
+    };
+}
+```
+
+```rust
+use std::fs::File;
+
+fn main() {
+    let greeting_file = File::open("hello.txt").unwrap();
+}
+```
+
+#### 에러를 전달하기
+
+-   한 함수에서 에러를 처리하지 않고 그 호출자에게 처리를 맡기는 패턴.
+-   `?` 연산자를 사용하면 더 간편하게 해당 패턴을 구현할 수 있다. `Result`값 뒤에 오며 `match` 표현식과 거의 유사하게 동작한다. `Ok`일 때는 값을 그대로 리턴하고, 아니라면 그 즉시 `Err`값이 리턴되고 실행중인 함수는 종료 된다. 또 독특한 점은 `?`연산자에 의해 생긴 `Err`값은 `From` 트레이트의 `from()`메서드를 호출한다. 이 메서드를 통해 `Err`의 타입을 현재 함수의 리턴 타입으로 변경한다. 함수가 리턴할 수 있는 `Err` 타입이 하나일 때 유용하다고? 어차피 리턴 타입은 하나지.
+-   리턴 타입이 명확하지 않으면 `match`, 하나의 `Result<T,E>`로 가능하면 `?`를 쓰는 게 낫다.
+
+```rust
+#![allow(unused)]
+fn main() {
+    use std::fs::File;
+    use std::io::{self, Read};
+
+    fn read_username_from_file() -> Result<String, io::Error> {
+        let username_file_result = File::open("hello.txt");
+
+        let mut username_file = match username_file_result {
+            Ok(file) => file,
+            Err(e) => return Err(e),
+        };
+
+        let mut username = String::new();
+
+        match username_file.read_to_string(&mut username) {
+            Ok(_) => Ok(username),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn read_username_from_file() -> Result<String, io::Error> {
+        let mut username_file = File::open("hello.txt")?;
+        let mut username = String::new();
+        username_file.read_to_string(&mut username)?;
+        Ok(username)
+    }
+
+    fn read_username_from_file() -> Result<String, io::Error> {
+        let mut username = String::new();
+
+        File::open("hello.txt")?.read_to_string(&mut username)?;
+
+        Ok(username)
+    }
+
+    fn read_username_from_file() -> Result<String, io::Error> {
+        fs::read_to_string("hello.txt")
+    }
+}
+```
+
+```rust
+use std::fs::File;
+
+fn main() {
+    //main의 리턴타입은 ()이다.
+    let greeting_file = File::open("hello.txt")?;
+    //this function should return `Result` or `Option` to accept `?`
+}
+```
+
+```rust
+fn last_char_of_first_line(text: &str) -> Option<char> {
+    // Option<T>도 가능하다.
+    text.lines().next()?.chars().last()
+}
+```
+
+```rust
+use std::error::Error;
+use std::fs::File;
+// 메인의 리턴 타입도 수정할 수 있긴하다.
+// Box<dyn Error>은 트레이트 오브젝트의 일종이며 어떤 에러가 될 수도 있다.
+// main이 Result<(),E>를 리턴한다면 전통적인 방식대로 바이너리는 Ok라면 0을, Err이라면 0이 아닌 값을 리턴할 것이다.
+// std::process::Termination 트레이트를 구현한 어떤 값이든 main은 리턴할 수 있다. 이 함수는 ExitCode를 리턴하는 report 함수를 포함한다.
+fn main() -> Result<(), Box<dyn Error>> {
+    let greeting_file = File::open("hello.txt")?;
+
+    Ok(())
+}
+```
+
+### 제네릭(Generic)
+
+-   제네릭이다. 아래 용례로 익히자.
+-   컴파일 타임에 코드를 만든다(Monomorphization). c++하고 비슷한 짓을 한다.
+
+```rust
+fn largest<T>(list: &[T]) -> &T {
+    let mut largest = &list[0];
+
+    for item in list {
+        if item > largest {
+            largest = item;
+        }
+    }
+
+    largest
+}
+
+fn main() {
+    let number_list = vec![34, 50, 25, 100, 65];
+
+    let result = largest(&number_list);
+    println!("The largest number is {}", result);
+
+    let char_list = vec!['y', 'm', 'a', 'q'];
+
+    let result = largest(&char_list);
+    println!("The largest char is {}", result);
+}
+//실패한다.
+//help: consider restricting type parameter `T`
+//binary operation `>` cannot be applied to type `&T`
+//fn largest<T: std::cmp::PartialOrd>(list: &[T]) -> &T {
+// std::cmp::PartialOrd를 구현하지 않으면 비교할 수 없다.
+```
+
+```rust
+struct Point<T, U> {
+    x: T,
+    y: U,
+}
+
+enum Option<T> {
+    Some(T),
+    None,
+}
+```
+
+```rust
+struct Point<T> {
+    x: T,
+    y: T,
+}
+
+// 전체 타입에 적용
+impl<T> Point<T> {
+    fn x(&self) -> &T {
+        &self.x
+    }
+}
+
+// 이렇게 타입별로 메서드를 정의할 수도 있다.
+impl Point<f32> {
+    fn distance_from_origin(&self) -> f32 {
+        (self.x.powi(2) + self.y.powi(2)).sqrt()
+    }
+}
+```
+
+```rust
+struct Point<X1, Y1> {
+    x: X1,
+    y: Y1,
+}
+
+//이런 정신나간 응용도 가능하다.
+impl<X1, Y1> Point<X1, Y1> {
+    fn mixup<X2, Y2>(self, other: Point<X2, Y2>) -> Point<X1, Y2> {
+        Point {
+            x: self.x,
+            y: other.y,
+        }
+    }
+}
+
+fn main() {
+    let p1 = Point { x: 5, y: 10.4 };
+    let p2 = Point { x: "Hello", y: 'c' };
+
+    let p3 = p1.mixup(p2);
+
+    println!("p3.x = {}, p3.y = {}", p3.x, p3.y);
+}
+```
+
+### 트레이트(Trait)
+
+-   특정 타입이 가진 기능을 정의하고 다른 타입과 공유한다.
+-   인터페이스와 유사하다.
+-   `impl` 키워드로 타입에 대해 트레이트를 구현한다. 트레이트의 메서드를 전부 구현해야한다.
+-   하지만 외부의 트레이트를 외부 타입에 구현할 순 없다. 가령, Vec<T>의 Display 트레이트를 내가 작성한 코드에는 구현할 수 없고, 그 역도 마찬가지다. 이런 제한들을 `coherence`라고 부르며, 좀 더 명확하게는 `orphan rule`이라고 한다. 왜냐하면 부모 타입을 직접 볼 수 없기 때문이다. 이를 통해 타인과 내 코드를 보호한다.
+-   메서드에 대해 디폴트 구현도 할 수 있다. 구현시에 `impl`내에 해당 메서드 구현을 안하면 된다.
+
+```rust
+pub trait Summary {
+    fn summarize(&self) -> String;
+}
+pub struct NewsArticle {
+    pub headline: String,
+    pub location: String,
+    pub author: String,
+    pub content: String,
+}
+
+impl Summary for NewsArticle {
+    fn summarize(&self) -> String {
+        format!("{}, by {} ({})", self.headline, self.author, self.location)
+    }
+}
+
+pub struct Tweet {
+    pub username: String,
+    pub content: String,
+    pub reply: bool,
+    pub retweet: bool,
+}
+
+impl Summary for Tweet {
+    fn summarize(&self) -> String {
+        format!("{}: {}", self.username, self.content)
+    }
+}
+```
+
+```rust
+pub trait Summary {
+    fn summarize_author(&self) -> String;
+
+    //디폴트 메서드가 다른 메서드를 호출하도록 할 수도 있다.
+    fn summarize(&self) -> String {
+        format!("(Read more from {}...)", self.summarize_author())
+    }
+}
+```
+
+#### 파라미터와 트레이트 바운드
+
+-   함수 파라미터로도 쓸 수 있다. `&impl Summary` 같은 식으로 쓴다. 이 표현은 트레이트 바운트 문법의 syntatic sugar다. 단순한 상황에서 유용하다.
+-   `+` 구문을 쓰면 다수의 트레이트 바운드를 줄 수 있다. `&(impl Summary + Display)` / `<T: Summary + Display>` 같은 식이다. 파라미터는 두 트레이트를 구현해야만 한다.
+-   `where`를 쓰면 복잡한 상황에서 유용하다.
+
+```rust
+//트레이트 바운드를 줄 수 있다.
+pub fn notify<T: Summary>(item: &T) {
+    println!("Breaking news! {}", item.summarize());
+}
+//impl을 이용하면 좀 더 간략하게 쓸 수 있다.
+pub fn notify(item: &impl Summary) {
+    println!("Breaking news! {}", item.summarize());
+}
+
+//impl을 쓰면 다소 번거롭다.
+pub fn notify(item1: &impl Summary, item2: &impl Summary) {}
+//트레이트 바운드를 쓰면 훨씬 간략하다.
+pub fn notify<T: Summary>(item1: &T, item2: &T) {}
+
+//+ 구문
+pub fn notify(item: &(impl Summary + Display)) {}
+pub fn notify<T: Summary + Display>(item: &T) {}
+
+//where
+fn some_function<T: Display + Clone, U: Clone + Debug>(t: &T, u: &U) -> i32 {}
+fn some_function<T, U>(t: &T, u: &U) -> i32
+where
+    T: Display + Clone,
+    U: Clone + Debug,
+{}
+```
+
+#### 리턴 타입과 트레이트
+
+-   리턴 타입에도 `impl Summary` 같은 식으로 쓸 수 있다. 이 경우 정확한 타입을 기입하지 않는다. 그럴 필요가 있다면 트레이트를 리턴할 이유가 없으니까.
+-   그런데 `impl`은 단일 타입을 리턴할 때만 사용이 가능하다.
+
+```rust
+fn returns_summarizable() -> impl Summary {
+    Tweet {
+        username: String::from("horse_ebooks"),
+        content: String::from(
+            "of course, as you probably already know, people",
+        ),
+        reply: false,
+        retweet: false,
+    }
+}
+```
+
+```rust
+fn returns_summarizable(switch: bool) -> impl Summary {
+    if switch {
+        NewsArticle {
+            // snip
+        }
+    } else {
+        Tweet {
+            // snip
+        }
+    }
+}
+// 컴파일 안 된다.
+// 이는 `impl Trait`의 구현과 연관된 문제라고 한다. 다른 방법이 있다고 한다.
+```
+
+#### 트레이트 바운드를 이용한 조건부 구현
+
+-   아래 예시들처럼 조건부 구현도 가능하다.
+
+```rust
+use std::fmt::Display;
+
+struct Pair<T> {
+    x: T,
+    y: T,
+}
+
+impl<T> Pair<T> {
+    fn new(x: T, y: T) -> Self {
+        Self { x, y }
+    }
+}
+
+impl<T: Display + PartialOrd> Pair<T> {
+    fn cmp_display(&self) {
+        if self.x >= self.y {
+            println!("The largest member is x = {}", self.x);
+        } else {
+            println!("The largest member is y = {}", self.y);
+        }
+    }
+}
+
+struct NoImpl {
+    x: u8,
+}
+
+fn main() {
+    //c는 cmp_display를 쓸 수 있다.
+    let c = Pair { x: 1, y: 1 };
+    //NoImple은 어느 트레이트도 구현하지 않으므로 cmp_display를 쓸 수 없다.
+    let c2 = Pair { x: NoImpl{ x: 1}, y: NoImpl{ x: 1} };
+}
+```
+
+-   임의의 타입에 조건부 구현을 하는 방법도 존재한다. `blanket implementation`이라고 하며 스탠다드 라이브러리에서 많이 쓴다. `ToString`이 대표적이라고.
+-   이런 구현에 대한 상세는 트레이트 문서의 "Implementors" 섹션에서 찾을 수 있다고 한다.
+
+```rust
+impl<T: Display> ToString for T {
+    // --snip--
+}
+
+let s = 3.to_string();
+```
+
+### 라이프타임(Lifetime)
+
+-   레퍼런스가 유요한 스코프를 의미한다. 즉, 모든 레퍼런스는 라이프타임을 가진다.
+-   대부분 타입처럼 알아서 추론되지만, 여러 가능성이 있어 불가능한 경우에는 타입처럼 명시해주어야한다.
+-   라이프타임의 주목적은 dangling reference를 방지하는 것이다.
+
+```rust
+fn main() {
+    //할당 안하고도 쓸 수 있다. 그런데 사용전에는 할당 해야한다. 이는 rust에 null이 없기 때문이다.
+    let r;
+
+    {
+        let x = 5;
+        r = &x;
+           //^^ borrowed value does not live long enough
+    }
+    // - `x` dropped here while still borrowed
+
+    println!("r: {}", r);
+    // - borrow later used here
+}
+```
+
+#### borrow checker
+
+-   컴파일러는 borrow checker를 포함한다. 이를 통해 스코프를 비교하고 모든 `borrow`가 유효한지 확인한다. 아래 예시처럼 동작한다.
+
+```rust
+// 1. r은 'a의 스코프를, x는 'b의 스코프를 가진다.
+// 2. r은 'a의 라이프타임을 가지지만 그보다 작은 'b 라이프타임(x)의 메모리를 참조한다.
+// 3. 그렇기에 이 프로그램은 유효하지 않고, 컴파일 되지 않는다.
+fn main() {
+    let r;                // ---------+-- 'a
+                          //          |
+    {                     //          |
+        let x = 5;        // -+-- 'b  |
+        r = &x;           //  |       |
+    }                     // -+       |
+                          //          |
+    println!("r: {}", r); //          |
+}                         // ---------+
+```
+
+```rust
+// 1. r은 'a의 스코프를, x는 'b의 스코프를 가진다.
+// 2. r은 'a의 라이프타임을 가지고, 그보다 큰 'b 라이프타임(x)의 메모리를 참조한다.
+// 3. 그렇기에 이 프로그램은 유효하고 컴파일 된다.
+fn main() {
+    let x = 5;            // ----------+-- 'b
+                          //           |
+    let r = &x;           // --+-- 'a  |
+                          //   |       |
+    println!("r: {}", r); //   |       |
+                          // --+       |
+}                         // ----------+
+```
+
+#### 라이프타임 명시
+
+```rust
+fn main() {
+    let string1 = String::from("abcd");
+    let string2 = "xyz";
+
+    let result = longest(string1.as_str(), string2);
+    println!("The longest string is {}", result);
+}
+// 컴파일 안 된다.
+// 왜냐하면 두 레퍼런스중 뭐가 리턴될 지 알 수 없기 때문이다.
+// 때문에 라이프타임도 알 수 없다.
+fn longest(x: &str, y: &str) -> &str {
+    //        ----     ----     ^ expected named lifetime parameter
+    if x.len() > y.len() {
+        x
+    } else {
+        y
+    }
+}
+```
+
+-   `'`를 이용해 라이프타임을 명시할 수 있다. 이름 앞에 붙이며, 보통 짧게 전부 소문자로 이름을 붙인다.
+-   외부로부터 유래한 레퍼런스(파라미터)가 유발하는 라이프타임 관계를 컴파일러에게 정확히 알려주기 위해 사용한다.
+-   정보를 주는 어노테이션이지 실제 레퍼런스의 수명을 길게하는 등, 라이프타임에 영향을 주는 동작은 할 수 없다.
+
+```rust
+&i32        // 레퍼런스
+&'a i32     // 라이프타임을 명시한 레퍼런스
+&'a mut i32 // 라이프타임을 명시한 가변 레퍼런스
+```
+
+-   위의 라이프타임 명시만으로는 별 의미가 없다. 아래처럼 함수의 맥락에서 의미가 있다.
+-   제네릭처럼 명시한다.
+
+```rust
+fn main() {
+    let string1 = String::from("abcd");
+    let string2 = "xyz";
+
+    let result = longest(string1.as_str(), string2);
+    println!("The longest string is {}", result);
+}
+
+// 리턴과 파라미터의 라이프타임이 동일하다고 컴파일러에 힌트를 준다.
+// 동작을 바꾸지 않는다. borrow checker는 이 라이프타임을 지키지 않는 값을 거절한다.
+fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+    if x.len() > y.len() {
+        x
+    } else {
+        y
+    }
+}
+```
+
+```rust
+fn main() {
+    let string1 = String::from("long string is long");
+
+    {
+        let string2 = String::from("xyz");
+        //이렇게 정확한 레퍼런스가 넘어갈 때 라이프타임이 확정 되는데
+        //이 경우, string2의 라이프타임이 짧으므로, 해당 함수 내에서 string1의 라이프타임이 string2와 같은 것으로 간주된다.
+        let result = longest(string1.as_str(), string2.as_str());
+        println!("The longest string is {}", result);
+    }
+}
+
+fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+    if x.len() > y.len() {
+        x
+    } else {
+        y
+    }
+}
+```
+
+```rust
+fn main() {
+    let string1 = String::from("long string is long");
+    let result;
+    {
+        let string2 = String::from("xyz");
+        // strign2의 라이프타임이 가장 짧으므로 그에 맞춰진다.
+        // 컴파일러가 인식하기에 result의 라이프타임도 이 스코프까지다.
+        result = longest(string1.as_str(), string2.as_str());
+    }
+    //그러니 borrow checker는 이 코드가 무효하다고 판단한다.
+    println!("The longest string is {}", result);
+}
+
+fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+    if x.len() > y.len() {
+        x
+    } else {
+        y
+    }
+}
+```
+
+```rust
+//y는 x의 라이프타임과 관계를 전혀 맺지 않기 때문에 필요없다.
+fn longest<'a>(x: &'a str, y: &str) -> &'a str {
+    x
+}
+```
+
+```rust
+//이런 dangling reference 상황도 불가능하다.
+//외부 요인인 파라미터들의 라이프타임과 리턴값의 라이프타임이 서로 아무 관계도 없기 때문이다.
+fn longest<'a>(x: &str, y: &str) -> &'a str {
+    let result = String::from("really long string");
+    result.as_str()
+}
+```
+
+#### struct와 라이프타임
+
+-   struct가 레퍼런스 필드를 지닐 수도 있는데 이 경우, 라이프타임을 명시해야한다.
+
+```rust
+struct ImportantExcerpt<'a> {
+    part: &'a str,
+}
+
+fn main() {
+    let novel = String::from("Call me Ishmael. Some years ago...");
+    let first_sentence = novel.split('.').next().expect("Could not find a '.'");
+    //part는 novel의 라이프타임을 가진다고 명시한다.
+    let i = ImportantExcerpt {
+        part: first_sentence,
+    };
+}
+```
+
+#### 라이프타임 생략 규칙(lifetime elision rule)
+
+-   rust는 라이프타임에 한하여 간략한 코드 작성을위해 생략 규칙을 가진다. 이를 통해 명확한 상황에서 컴파일러가 알아서 라이프타임을 추론하게 해주고 작성할 코드 수를 줄여준다.
+-   파라미터의 라이프타임은 `인풋 라이프타임`, 리턴 값의 라이프타임은 `아웃풋 라이프타임`이라고 한다.
+-   현재 컴파일러는 다음 세 가지 규칙으로 라이프타임을 추론한다. 이 규칙을 만족하지 못하면 라이프타임을 명시해야 한다고 컴파일러가 알려준다.
+    1. 컴파일러는 라이프타임 파라미터를 각 레퍼런스 파라미터에 할당한다. `fn foo<'a>(x: &'a i32);`, `n foo<'a, 'b>(x: &'a i32, y: &'b i32);` 같은 식이다.
+    2. 만약 딱 하나의 인풋 라이프타임 파라미터가 있다면 라이프타임이 모든 아웃풋 라이프타임 파라미터에 적용 된다. `fn foo<'a>(x: &'a i32) -> &'a i32`.
+    3. 다수의 인풋 라이프타임 파라미터가 존재하는데 그중 하나가 `&self`이거나, `&mut self`인 경우, 즉, 메서드인 경우, `self`의 라이프타임이 모든 아웃풋 라이프타임 파라미터에 적용된다.
+
+```rust
+//사실 아래의 코드는 과거 rust에서는 컴파일 되지 않았다.
+//하지만 생략 규칙이 추가 되면서 이렇게 작성이 가능해졌다.
+//앞으로도 많은 규칙이 추가되어 라이프타임을 기술하는 경우는 더 적어질 것이다.
+fn first_word(s: &str) -> &str {
+    let bytes = s.as_bytes();
+
+    for (i, &item) in bytes.iter().enumerate() {
+        if item == b' ' {
+            return &s[0..i];
+        }
+    }
+
+    &s[..]
+}
+```
+
+```rust
+fn first_word(s: &str) -> &str {}
+//1. 각 레퍼런스 파라미터가 자신의 인풋 라이프타임 파라미터를 갖게한다.
+//fn first_word<'a>(s: &'a str) -> &str
+//2. 딱 하나의 인풋 라이프타임 파라미터가 존재하므로, 아웃풋 라이프타임 파라미터도 이와 동일하다.
+//fn first_word<'a>(s: &'a str) -> &'a str
+//3. 모든 인풋과 아웃풋이 라이프타임을 알게 되었으므로 3번 규칙은 볼 필요 없다. 애초에 self도 없다. 이대로 borrow checker가 라이프타임을 체크한다.
+```
+
+```rust
+fn longest(x: &str, y: &str) -> &str{}
+//1. 각 레퍼런스 파라미터가 자신의 인풋 라이프타임 파라미터를 갖게한다.
+// fn longest<'a, 'b>(x: &'a str, y: &'b str) -> &str
+//2. 두 개의 인풋 라이프타임 파라미터가 존재한다. 아웃풋 라이프타임 파라미터를 추론할 수 없다.
+//3. self가 없으므로 3번 규칙을 적용할 수 없다.
+//모든 인풋/아웃풋 파라미터의 라이프타임을 추론할 수 없으므로 컴파일러는 해당 함수의 라이프타임을 추론할 수 없다.
+```
+
+```rust
+struct ImportantExcerpt<'a> {
+    part: &'a str,
+}
+
+//impl과 타입에는 명시해야한다.
+//1. 레퍼런스 파라미터가 자신의 인풋 라이프타임 파라미터를 갖게한다. 그런데 애초에 레퍼런스가 인풋 파라미터 하나라 모든 라이프타임을 추론할 수 있다.
+impl<'a> ImportantExcerpt<'a> {
+    fn level(&self) -> i32 {
+        3
+    }
+}
+
+impl<'a> ImportantExcerpt<'a> {
+    //1. 레퍼런스 파라미터가 자신의 인풋 라이프타임 파라미터를 갖게한다.
+    //2. 두 개의 인풋 라이프타임 파라미터가 존재한다. 아웃풋 라이프타임 파라미터를 추론할 수 없다.
+    //3. self가 존재한다. 아웃풋 라이프타임 파라미터는 self를 따라간다. 모든 파라미터의 라이프타임을 추론할 수 있다.
+    fn announce_and_return_part(&self, announcement: &str) -> &str {
+        println!("Attention please: {}", announcement);
+        self.part
+    }
+}
+```
+
+#### static 라이프타임
+
+-   프로그램이 살아있는 동안 유효한 라이프타임을 의미한다.
+-   대표적으로 문자열 리터럴들이 그에 속한다.
+-   가끔 이 걸 쓰도록 권하는 경우가 있는데 그래도 정말 이 레퍼런스가 그러한지 잘 생각해본다.
+
+```rust
+let s: &'static str = "I have a static lifetime.";
+```
+
+### 제네릭, 트레이트 바운드, 라이프타임
+
+```rust
+use std::fmt::Display;
+
+fn longest_with_an_announcement<'a, T>(
+    x: &'a str,
+    y: &'a str,
+    ann: T,
+) -> &'a str
+where
+    T: Display,
+{
+    println!("Announcement! {}", ann);
+    if x.len() > y.len() {
+        x
+    } else {
+        y
+    }
+}
+```
+
+### 테스트 코드 작성
+
+-   테스트는 `#[test]` 어트리뷰트를 쓴 함수다.
+-   테스트를 할 땐 `cargo test` 커맨드를 쓴다. 그러면 Rust가 알아서 테스트 러너 바이너리를 만들고 테스트를 진행한다.
+-   새 라이브러리 프로젝트를 만들 떄(`cargo new [project name] --lib` 테스트 모듈이 알아서 만들어진다. 이 모듈은 테스트 템플릿 코드로 쓰인다.
+-   검증을 위해 다양한 assert 매크로가 제공된다.
+-   assert 메서드를 위해 자기가 작성한 struct와 enum에 `#[derive(PartialEq, Debug)]`을 다는게 좋다.
+-   벤치마크도 가능하다는데 나이틀리 빌드의 rust에서만 되는 거 같다.
+-   문서화 테스트도 한다.
+-   `#[should_panic]`으로 패닉이 발생해야만 하는 테스트도 할 수 있다. `panic!` 자체에 메시지를 담는 것도 유용할 수 있다.
+-   `Result<T,E>`는 assert 없이도 바로 테스트가 가능하다. 패닉을 발생시키고 싶으면 `assert!(value.is_err())`를 쓰자.
+-   테스트 필터링도 할 수 있고, 무시도 할 수 있다.
+-   `carge test --help` 테스트 시 쓸 수 있는 옵션들을 볼 수 있다.
+-   테스트는 기본적으로 스레드를 사용해 병렬로 실행된다. `--test-threads=1` 플래그를 이용해 스레드 갯수를 조절할 수도 있다.
+-   보통은 실패한 테스트의 stdout만 캐치되고 결과창에 보여진다. 성공한 것도 보고 싶으면 `--show-output` 플래그를 쓴다.
+-   `cargo test [테스트 이름]`을 입력하면 하나의 테스트만 실행할 수 있다.
+-   `cargo test add`를 입력하면 이름에 add가 포함된 테스트만 실행할 수 있다.
+-   `#[ignore]`를 쓰면 해당 테스트를 무시한다. `--ignored` 플래그를 쓰면 이런 테스트만 실행한다. `--include-ignored`는 그냥 다 실행한다.
+-   유닛 테스트시, 테스트 모듈의 이름은 보통 `tests`로 짓고 `#[cfg(test)]` 어트리뷰트를 붙인다. 이 어트리뷰트는 해당 모듈의 코드를 `cargo test`을 실행할 때만 실행하라고 알려주는 역할을 한다. 이를 통해 필요한 부분만 컴파일 할 수 있다. 테스트는 바이너리에 포함 되지 않는다. 유닛 테스트는 테스트할 코드와 같은 파일에 저장 되기에 필요한 매커니즘이다.
+-   통합 테스트는 루트에 `tests` 디렉토리를 만들어 진행한다. `Cargo`가 인식하는 폴더다. 해당 폴더내 각 소스가 하나의 크레이트가 된다. 해당 디렉토리는 특별하기에 `cargo test`할 때만 실행되고 컴파일 된다. 그러므로 `#[cfg(test)]`가 통합 테스트에선 필요 없다.
+-   통합 테스트시 공통 루틴을 정의한 소스에 대해서는 오래된 방식의 모듈을 쓴다(`test/common/mod.rs`). 그래야 테스트에 안 걸린다.
+-   만일 프로젝트에 라이브러리 크레이트가 없으면(src/lib.rs) 통합테스트를 만들 수 없다.
+
+```rust
+//src/lib.rs
+//'cargo new'로 생성된 것
+pub fn add(left: usize, right: usize) -> usize {
+    left + right
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        let result = add(2, 2);
+        assert_eq!(result, 4);
+    }
+}
+```
+
+```rust
+#[test]
+fn greeting_contains_name() {
+    let result = greeting("Carol");
+    assert!(
+        result.contains("Carol"),
+        "Greeting did not contain name, value was `{}`",
+    result
+    );
+}
+```
+
+```rust
+#[test]
+#[should_panic(expected = "less than or equal to 100")]
+fn greater_than_100() {
+    Guess::new(200);
+}
+```
+
+```rust
+#[test]
+fn it_works() -> Result<(), String> {
+    if 2 + 2 == 4 {
+        Ok(())
+    } else {
+        Err(String::from("two plus two does not equal four"))
+    }
+}
+```
