@@ -2556,5 +2556,330 @@ fn it_works() -> Result<(), String> {
 
 #### 클로저(Closure)
 
-- rust는 클로저라는 이름의 익명함수를 제공한다. 이 함수는 변수에 저장할 수도 있고, 다른 함수에서 파라미터로도 쓸 수 있다.
+-   rust는 클로저라는 이름의 익명함수를 제공한다. 이 함수는 변수에 저장할 수도 있고, 다른 함수에서 파라미터로도 쓸 수 있다.
+-   값을 스코프내에 캡쳐한다.
+-   보통 타입을 쓰지 않는다. 이는 클로저가 노출되는 인터페이스가 아니기 때문이다.
+-   클로저는 이처럼 이름도 없고, 외부로 노출 되지도 않는데다 어떤 상황이든 굉장히 좁은 컨텍스트에서 사용된다. 그렇기에 컴파일러가 그 시그니처를 추론하는게 어렵지 않다. 물론 거의 안 쓸 뿐이지 컴파일러가 요구하는 순간도 있다.
+-   클로저는 세가지 방식으로 변수를 캡쳐한다.
+    -   불변 레퍼런스(borrowing immutably): 문맥에 따라 컴파일러가 추론한다.
+    -   가변 레퍼런스(borrowing mutably): 문맥에 따라 컴파일러가 추론한다.
+    -   소유권 취득(take ownership): 문맥에 따라 그렇게 추론 되지 않더라도, `move` 키워드로 강제로 소유권을 취득할 수 있다. 새 스레드로 데이터를 넘길 때 사용하는 테크닉이다.
+-   클로저의 바디는 사실상 \*캡쳐한 값을 나중에 쓸 때 어떻게 쓸지 정의한 코드\*\*이다. 클로저가 값을 캡쳐하고 다루는 방법은 클로저가 구현하는 트레이트에 영향을 미친다. 이 트레이트는 함수와 struct가 사용할 수 있는 클로저의 종류를 지정하는 방법이다. 클로저는 바디가 캡쳐한 값을 다루는 방법에 따라 알아서 `Fn` 트레이트를 하나에서 세개까지 구현한다.
+    -   `FnOnce`: 한번 호출 될 수 있는 클로저에 적용된다. 모든 클로저가 한 번이상 호출 될 수 있기에 이 트레이트를 구현한다. 바디 밖으로 캡쳐한 값을 move하는 클로저는 이 것만 구현한다. 딱 한 번만 호출될 테니까.
+    -   `FnMut`: 캡쳐된 값을 바디 밖으로 move하지 않는 클로저에 구현된다. 하지만 값을 변경할 수도 있다. 한 번 이상 호출될 수 있다.
+    -   `Fn`: 캡쳐된 값을 바디 밖으로 move 하지도 않고,변경하지도 않는 클로저에 구현된다. 클로저가 아무것도 캡쳐하지 않는 것과 같다. 한 번이상 호출 될 수 있으며 캡쳐한 값을 바꾸지 않는다. 동시에 클로저를 여러번 호출할 때 중요하다.
+-   함수도 `Fn` 트레이트 세 개를 전부 구현할 수도 있다. 가령, 캡쳐를 안 할거라면 원하는 `Fn` 트레이트를 구현한 함수를 쓸 수도 있다. 가령, `Option<Vec<T>>` 값에 대해 `unwrap_or_else(Vec::new)`를 호출했다면 `None`의 경우, 빈 배열이 리턴된다.
 
+```rust
+#[derive(Debug, PartialEq, Copy, Clone)]
+enum ShirtColor {
+    Red,
+    Blue,
+}
+
+struct Inventory {
+    shirts: Vec<ShirtColor>,
+}
+
+impl Inventory {
+    fn giveaway(&self, user_preference: Option<ShirtColor>) -> ShirtColor {
+        // unwrap_or_else는 클로저를 파라미터로 받아들인다.
+        // 이 클로저는 파라미터가 없기에 || ~의 형태이며, self를 캡쳐한다.
+        // 보다시피 이렇게 굉장히 제한적인 컨텍스트에서 사용된다.
+        user_preference.unwrap_or_else(|| self.most_stocked())
+    }
+
+    fn most_stocked(&self) -> ShirtColor {
+        let mut num_red = 0;
+        let mut num_blue = 0;
+
+        for color in &self.shirts {
+            match color {
+                ShirtColor::Red => num_red += 1,
+                ShirtColor::Blue => num_blue += 1,
+            }
+        }
+        if num_red > num_blue {
+            ShirtColor::Red
+        } else {
+            ShirtColor::Blue
+        }
+    }
+}
+
+fn main() {
+    let store = Inventory {
+        shirts: vec![ShirtColor::Blue, ShirtColor::Red, ShirtColor::Blue],
+    };
+
+    let user_pref1 = Some(ShirtColor::Red);
+    let giveaway1 = store.giveaway(user_pref1);
+    println!(
+        "The user with preference {:?} gets {:?}",
+        user_pref1, giveaway1
+    );
+
+    let user_pref2 = None;
+    let giveaway2 = store.giveaway(user_pref2);
+    println!(
+        "The user with preference {:?} gets {:?}",
+        user_pref2, giveaway2
+    );
+}
+```
+
+```rust
+//이렇게 타입을 명시한다.
+//이렇게 변수에 할당할 수도 있다.
+let expensive_closure = |num: u32| -> u32 {
+    println!("calculating slowly...");
+    thread::sleep(Duration::from_secs(2));
+    num
+};
+```
+
+```rust
+fn  add_one_v1   (x: u32) -> u32 { x + 1 } // 함수
+let add_one_v2 = |x: u32| -> u32 { x + 1 }; // 클로저
+// 사용 문맥이 없으면 타입을 표시해야한다. 이는 `let v = Vec::new()`와 동일하다.
+let add_one_v3 = |x|             { x + 1 }; // 클로저
+let add_one_v4 = |x|               x + 1  ; // 클로저
+```
+
+```rust
+let example_closure = |x| x;
+
+let s = example_closure(String::from("hello"));
+//이미 s에서 이 클로저는 String에 대한 것으로 추론이 끝났다.
+let n = example_closure(5);
+//error[E0308]: mismatched types
+//expected struct `String`, found integer
+```
+
+```rust
+fn main() {
+    let list = vec![1, 2, 3];
+    println!("Before defining closure: {:?}", list);
+
+    //println!에는 불변 레퍼런스 캡쳐면 충분하다.
+    let only_borrows = || println!("From closure: {:?}", list);
+
+    println!("Before calling closure: {:?}", list);
+    //캡쳐 후 나중에 쓴다.
+    only_borrows();
+    println!("After calling closure: {:?}", list);
+}
+```
+
+```rust
+fn main() {
+    let mut list = vec![1, 2, 3];
+    println!("Before defining closure: {:?}", list);
+
+    //push를 하려면 가변 레퍼런스 캡쳐
+    let mut borrows_mutably = || list.push(7);
+
+    borrows_mutably();
+    println!("After calling closure: {:?}", list);
+}
+```
+
+```rust
+fn main() {
+    let list = vec![1, 2, 3];
+    println!("Before defining closure: {:?}", list);
+    //list의 소유권을 메인 스레드에서 새 스레드로 넘긴다.
+    //어떤 스레드가 먼저 끝날지 알 수 없기 때문에 이런 동작을 해야한다.
+    thread::spawn(move || println!("From thread: {:?}", list))
+        .join()
+        .unwrap();
+}
+```
+
+```rust
+impl<T> Option<T> {
+    pub fn unwrap_or_else<F>(self, f: F) -> T
+    where
+        //클로저가 한번만 호출된다.
+        F: FnOnce() -> T
+    {
+        match self {
+            Some(x) => x,
+            None => f(),
+        }
+    }
+}
+```
+
+```rust
+#[derive(Debug)]
+struct Rectangle {
+    width: u32,
+    height: u32,
+}
+
+fn main() {
+    let mut list = [
+        Rectangle { width: 10, height: 1 },
+        Rectangle { width: 3, height: 5 },
+        Rectangle { width: 7, height: 12 },
+    ];
+    //FnMut를 구현한다. 이 이유는 정렬할 때 슬라이스내 각 아이템 횟수만큼 호출하기 때문이다.
+    //FnMut는 변경할 '수도' 있음이라는 걸 기억해라.
+    list.sort_by_key(|r| r.width);
+    println!("{:#?}", list);
+}
+```
+
+```rust
+
+fn main() {
+    let mut list = [
+        Rectangle { width: 10, height: 1 },
+        Rectangle { width: 3, height: 5 },
+        Rectangle { width: 7, height: 12 },
+    ];
+
+    let mut sort_operations = vec![];
+    let value = String::from("by key called");
+
+    //push로 인해 소유권이 옮겨진다. 이는 FnOnce를 구현한 것과 같다.
+    //그런데 해당 함수는 소유권이 옮겨지므로 한 번만 호출할 수 있다.
+    //그러므로 여러번 호출 될 수도 있는 이 함수에는 적용될 수 없다.
+    list.sort_by_key(|r| {
+        sort_operations.push(value);
+        r.width
+    });
+    println!("{:#?}", list);
+}
+```
+
+#### 반복자(Iterator)
+
+-   기본적으로 `lazy`하다. 반복자를 실제 소모하는 코드를 만나기전까지는 아무것도 하지 않는다.
+-   모든 반복자는 스탠다드 라이브러리의 `Iterator` 트레이트를 구현한다.
+-   반복자 호출시 내부 상태가 변하기 때문에 `next`를 호출하려면 반드시 mut로 선언해야한다. `for` 루프는 내부적으로 반복자의 소유권을 가져가고 알아서 mut로 만들어 쓴다.
+-   반복자의 메서드는 파라미터로 주로 클로저를 받아들인다.
+-   `next`를 호출하는 메서드를 `consumng adaptor`라고 한다. 반복자에서 얻은 값을 실제로 사용하기 떄문이다. 대표적으로 `sum`이 있는데 이 메서드는 반복자의 오너쉽을 취득하고 반복적으로 `next`를 호출한다.
+-   그와 반대로 `iterator adaptor`라는 메서드도 있다. 실제로 반복자를 쓰지 않고 대신 새로운 반복자를 만들어낸다. `map`이 대표젹이다. 다만 이런 메서드들은 실제 새로 생성한 반복자를 사용하기 전까지는 아무것도 하지 않는다. 이는 반복자의 lazy한 특성덕분이다.
+-   반복자를 얻어올 땐, `iter`, `into_iter`, `iter_mut`등 다양한 반복자가 있다. 각각 불변 레퍼런스, 소유권 취득, 가변 레퍼런스를 의미한다.
+
+```rust
+let v1 = vec![1, 2, 3];
+let v1_iter = v1.iter();
+//이 것만으론 아무것도 하지 않는다.
+```
+
+```rust
+let v1 = vec![1, 2, 3];
+let v1_iter = v1.iter();
+
+for val in v1_iter {
+    //여기서 실체화가 된다.
+    println!("Got: {}", val);
+}
+```
+
+```rust
+#![allow(unused)]
+fn main() {
+    pub trait Iterator {
+        type Item;
+
+        fn next(&mut self) -> Option<Self::Item>;
+
+        // methods with default implementations elided
+    }
+}
+```
+
+```rust
+#[test]
+fn iterator_demonstration() {
+    let v1 = vec![1, 2, 3];
+
+    //반복자 호출시 내부의 상태가 변하기 때문에 mut로 선언해야한다.
+    let mut v1_iter = v1.iter();
+    assert_eq!(v1_iter.next(), Some(&1));
+    assert_eq!(v1_iter.next(), Some(&2));
+    assert_eq!(v1_iter.next(), Some(&3));
+    assert_eq!(v1_iter.next(), None);
+}
+```
+
+```rust
+#[test]
+fn iterator_sum() {
+    let v1 = vec![1, 2, 3];
+
+    let v1_iter = v1.iter();
+
+    let total: i32 = v1_iter.sum();
+
+    assert_eq!(total, 6);
+    //다시 할 수 없다. sum에서 이미 반복자 소유권이 넘어갔기 때문이다.
+    //let v1_iter = v1.iter();
+}
+```
+
+```rust
+let v1: Vec<i32> = vec![1, 2, 3];
+
+//새 반복자를 소모하기전까지는 아무것도 안 한다.
+v1.iter().map(|x| x + 1);
+//warning: unused `Map` that must be used
+//note: iterators are lazy and do nothing unless consumed
+```
+
+```rust
+#[derive(PartialEq, Debug)]
+struct Shoe {
+    size: u32,
+    style: String,
+}
+
+fn shoes_in_size(shoes: Vec<Shoe>, shoe_size: u32) -> Vec<Shoe> {
+    //filter가 소유권을 취득하므로 into_iter를 쓴다.
+    shoes.into_iter().filter(|s| s.size == shoe_size).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filters_by_size() {
+        let shoes = vec![
+            Shoe {
+                size: 10,
+                style: String::from("sneaker"),
+            },
+            Shoe {
+                size: 13,
+                style: String::from("sandal"),
+            },
+            Shoe {
+                size: 10,
+                style: String::from("boot"),
+            },
+        ];
+
+        let in_my_size = shoes_in_size(shoes, 10);
+
+        assert_eq!(
+            in_my_size,
+            vec![
+                Shoe {
+                    size: 10,
+                    style: String::from("sneaker")
+                },
+                Shoe {
+                    size: 10,
+                    style: String::from("boot")
+                },
+            ]
+        );
+    }
+}
+
+```
