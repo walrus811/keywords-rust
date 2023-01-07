@@ -2818,7 +2818,7 @@ fn iterator_sum() {
 
     assert_eq!(total, 6);
     //다시 할 수 없다. sum에서 이미 반복자 소유권이 넘어갔기 때문이다.
-    //let v1_iter = v1.iter();
+    //let v1_iter = v1.iter(); 새로 다시 만든다.
 }
 ```
 
@@ -2880,6 +2880,570 @@ mod tests {
             ]
         );
     }
+}
+
+```
+
+#### 루프와 반복자 성능 비교
+
+-   반복자는 rust의 `zero-cost abstraction`중 하나다. 즉, 비슷한 로우 레벨 코드와 거의 비슷하게 컴파일 되며 런타임 오버헤드가 없다.
+-   성능 걱정하지말고 마구 써라.
+
+> 통상적으로 C++의 구현은 제로 오버헤드의 원칙을 따른다.
+> "쓰지 않는 것에 대가를 치르지 않는다. 더욱이, 쓰는 것보다 더 나은 코드를 사용할 수 없다."
+> _Bjarne Stroustrup, Foundations of C++” (2012)_
+
+```rust
+let buffer: &mut [i32];
+let coefficients: [i64; 12];
+let qlp_shift: i16;
+
+for i in 12..buffer.len() {
+    //rust는 이런 코드를 루프로 만드는 짓을 하진 않을 것이다.
+    //통상 루프 언롤링을 해 있는 그대로 로우레벨 코드로 컴파일 한다.
+    //그러니까 모든 coefficients내 값이 레지스터에 들어가서 연산될 거고, 배열의 바운드 체크 코드 같은 건 들어가지 않는다.
+    let prediction = coefficients.iter()
+                                 .zip(&buffer[i - 12..i])
+                                 .map(|(&c, &s)| c * s as i64)
+                                 .sum::<i64>() >> qlp_shift;
+    let delta = buffer[i];
+    buffer[i] = prediction as i32 + delta;
+}
+```
+
+### Cargo와 [Crates.io](https://crates.io)
+
+-   [상세 Cargo 가이드(https://doc.rust-lang.org/cargo/)
+
+#### 릴리즈 프로필로 빌드 커스터마이즈
+
+-   cargo는 `dev` 프로필과 `release` 프로필 두 가지를 사용한다. 전자는 `cargo build`, 후자는 `cargo build --release` 커맨드에 의해 사용된다.
+-   `Cargo.toml`에 `[profle.dev]`와 `[profile.release]`로 설정한다.
+
+```toml
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+```
+
+#### Crate.io에 크레이트 배포
+
+##### 문서화
+
+-   documentation comment은 `///`를 쓰며 마크다운을 지원하며, 그를 통해 HTML을 생성한다.
+-   `cargo doc [--open]`으로 문서를 만들며, *target/doc*에 생성된 파일이 담긴다.
+-   커뮤니티에서는 보통 `# Examples`, `# Panics`, `# Errors`, `# Saftey`를 많이 작성한다. 각각, 예시, 패닉이 발생하는 상황, `Result` 리턴 시 발생할 수 있는 에러, 이 함수가 왜 `unsafe`이고, 어떻게 다루어야하는지를 나타낸다.
+-   `# Example` 코드블록의 경우, 놀랍게도 `cargo test` 실행시 해당 코드를 실행한다. 그러니 동작되는 코드만 넣어두는 게 좋다.
+
+````rust
+/// Adds one to the number given.
+///
+/// # Examples
+///
+/// ```
+/// let arg = 5;
+/// let answer = my_crate::add_one(arg);
+///
+/// assert_eq!(6, answer);
+/// ```
+pub fn add_one(x: i32) -> i32 {
+    x + 1
+}
+````
+
+-   외에도 `//!`가 있는데 이는 보통 전체 크레이트나 모듈에 대한 전반적인 설명을 작성하기 위해 사용한다. 보통 *lib.ru*의 최상단에 작성한다.
+
+```rust
+//! # My Crate
+//!
+//! `my_crate` is a collection of utilities to make performing certain
+//! calculations more convenient.
+
+/// Adds one to the number given.
+// --snip--
+pub fn add_one(x: i32) -> i32 {
+    x + 1
+}
+```
+
+##### pub use로 사용자 친화적인 퍼블릭 API 구조 생성
+
+-   사용자 입장에서는 `my_crate::some_module::another_module::UsefulType;` 보다는 `use my_crate::UsefulType;`가 나을 것이다.
+-   사용자 친화적인 모듈구조를 만들기 위해 기존 구조를 수정할 필요는 없다. `pub use`를 사용하면 원하는 구조로 모듈을 익스포트할 수 있다(re-export).
+
+```rust
+//! # Art
+//!
+//! A library for modeling artistic concepts.
+
+pub use self::kinds::PrimaryColor; //이러면 Re-export로 문서에 나오는데다 art::PrimaryColor로 바로 임포트가 가능하다.
+pub use self::kinds::SecondaryColor;
+pub use self::utils::mix;
+
+pub mod kinds {
+    // --snip--
+    /// The primary colors according to the RYB color model.
+    pub enum PrimaryColor {
+        Red,
+        Yellow,
+        Blue,
+    }
+
+    /// The secondary colors according to the RYB color model.
+    pub enum SecondaryColor {
+        Orange,
+        Green,
+        Purple,
+    }
+}
+
+pub mod utils {
+    // --snip--
+    use crate::kinds::*;
+
+    /// Combines two primary colors in equal amounts to create
+    /// a secondary color.
+    pub fn mix(c1: PrimaryColor, c2: PrimaryColor) -> SecondaryColor {
+        SecondaryColor::Orange
+    }
+}
+```
+
+##### Crate.io에 배포
+
+```bash
+cargo publish
+```
+
+```toml
+[package]
+name = "guessing_game"
+version = "0.1.0"
+edition = "2021"
+description = "A fun game where you guess what number the computer has chosen."
+license = "MIT OR Apache-2.0"
+```
+
+#### 워크스페이스
+
+-   같은 _Cargo.lock_ 파일과 아웃풋 디렉토리를 공유하는 패키지 모음을 말한다. VS의 솔루션과 프로젝트를 생각하면 될 거 같다.
+-   새로운 `Cargo.toml`을 만든다. 이 파일은 워크스페이스를 정의한다.
+-   `cargo run -p [패키지 이름]`으로 바이너리를 실행할 패키지를 지정할 수 있다.
+-   `cargo test`는 모든 패키지를 테스트한다. 마찬가지로 `-p`를 쓰면 패키지를 지정할 수 있다.
+
+```toml
+# Cargo.toml
+[workspace]
+
+members = [
+    "adder",
+    "add_one",
+]
+```
+
+```
+├── Cargo.lock # 단 하나만 존재한다.
+├── Cargo.toml
+├── add_one
+│   ├── Cargo.toml
+│   └── src
+│       └── lib.rs
+├── adder
+│   ├── Cargo.toml
+│   └── src
+│       └── main.rs
+└── target # 단 하나만 존재한다.
+```
+
+```toml
+# adder/Cargo.toml
+[dependencies]
+add_one = { path = "../add_one" }
+```
+
+#### `cargo install`
+
+-   바이너리를 로컬에 인스톨할 수 있다.
+-   보통 *$HOME/.cargo/bin*에 설치된다.
+
+#### Cargo 확장
+
+-   원한다면 커맨드 확장도 가능하다.
+-   `cargo-something`이란 파일이 \*$PATH&에 있으면 `cargo something`으로 실핼할 수 있는 식이다. `cargo --list`로 확인 가능.
+
+### 스마트 포인터
+
+-   보통 struct로 구현되고, `Deref`와 `Drop` 트레이트를 구현.
+-   `Deref`는 레퍼런스처럼 동작하게 해주는 트레이트이다.
+-   `Drop`은 스코프를 벗어난 데이터의 공간을 할당 해제해준다.
+-   대표적으로 `Box<T>`, `Rc<T>`, 그리고 `RefCell<T>`가 있다.
+    -   소유자의 수: `Box<T>`와 `RefCell<T>`는 소유자가 한명, `Rc<T>`는 소유자가 여러명
+    -   borrow 규칙 체크 시기: `Box<T>`와 `Rc<T>`는 컴파일 타임(이 중 `Rc<T>`는 불변 레퍼런스만 사용). `RefCell<T>`는 런타임.
+
+#### Box<T>
+
+-   데이터를 힙에 할당할 수 있게 해주는 스마트 포인터.
+-   데이터를 힙에 저장하는 것 외에는 퍼포먼스 오버헤드가 없다.
+-   자동으로 할당 해제된다. 스택의 포인터도 물론.
+-   다음 상황에서 주로 쓴다.
+    -   컴파일 타임에 크기를 알 수 없는 타입을 그 크기를 모르는 컨텍스트에서 써야할 때(포인터의 크기는 알 수 있다.)
+    -   복사 시간이 오래 걸리는 크기가 큰 데이터의 소유권을 복사 없이 옮기고 싶을 때
+    -   값의 소유권을 갖길 원하면서 그 타입이 특정 트레이트를 구현했는지에만 관심있을 때(트레이트 오브젝트)
+
+```rust
+fn main() {
+    let b = Box::new(5);
+    println!("b = {}", b);
+}
+```
+
+##### recursive type
+
+-   타입 내에 값이 그 자신의 타입을 갖는 타입.
+-   컴파일 타임에 정확한 데이터 크기를 알 수 없다.
+-   대표적으로 **cons list** 구조가 있다. 이 구조는 `Lisp`로부터 유래했으며 함수형 프로그래밍 스타일에서 많이 쓰인다. 중첩된 페어 구조를 지니며, Lisp의 링크드 리스트라고 할 수 있다. 두 개의 값을 지니는데 하나는 현재 아이템의 값이고, 다른 하나는 다음 아이템이다.
+
+```lisp
+(1, (2, (3, Nil)))
+```
+
+```rust
+enum List {
+// ^^^^^^^^^ recursive type has infinite size
+    Cons(i32, List),
+             //---- recursive without indirection
+    Nil,
+}
+// help: insert some indirection (e.g., a `Box`, `Rc`, or `&`) to make `List` representable
+// indirection은 값을 직접 저장하지말고 포인터로 간접적으로 저장하란 의미다.
+
+fn main() {
+    let list = Cons(1, Cons(2, Cons(3, Nil)));
+}
+```
+
+```rust
+enum Message {
+    //이중 가장 큰 사이즈의 variant가 할당될 크기다.
+    Quit,
+    Move { x: i32, y: i32 },
+    Write(String),
+    ChangeColor(i32, i32, i32),
+}
+```
+
+```rust
+enum List {
+    //모든 크기를 컴파일러가 알 수 있다.
+    Cons(i32, Box<List>),
+    Nil,
+}
+```
+
+#### Deref 트레이트
+
+-   해당 트레이트는 타입이 `*` 연산자(dereference)의 동작을 커스터마이징할 수 있게 해준다.
+-   그렇기에 타입에 이 트레이트를 구현함으로써 스마트 포인터가 레퍼런스처럼 동작하게끔 만든다.
+-   `DerefMut` 트레이트도 존재한다. 이는 가변 레퍼런스를 위해 존재한다.
+
+```rust
+fn main() {
+    let x = 5;
+    let y = &x;
+
+    assert_eq!(5, x);
+    assert_eq!(5, *y);
+    //assert_eq!(5, y);
+    //^^^^^^^^^^^^^^^^ no implementation for `{integer} == &{integer}`
+}
+```
+
+```rust
+fn main() {
+    let x = 5;
+    let y = Box::new(x);
+
+    assert_eq!(5, x);
+    // Box도 derefernece가 된다.
+    assert_eq!(5, *y);
+}
+```
+
+```rust
+struct MyBox<T>(T);
+
+impl<T> MyBox<T> {
+    fn new(x: T) -> MyBox<T> {
+        MyBox(x)
+    }
+}
+fn main() {
+    let x = 5;
+    let y = MyBox::new(x);
+
+    assert_eq!(5, x);
+    assert_eq!(5, *y);
+    //error[E0614]: type `MyBox<{integer}>` cannot be dereferenced
+}
+```
+
+```rust
+use std::ops::Deref;
+
+impl<T> Deref for MyBox<T> {
+    type Target = T; // associated type이라고 한다.
+
+    //dereference 동작 구현
+    // *y -> *(y.deref())로 알아서 바꿔준다.
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+```
+
+#### Deref Coercion
+
+-   `Deref` 트레이트를 구현한 타입을 레퍼런스로 바꿔주는 동작을 말한다.
+-   `&String` -> `&str`로 알아서 바꿔주는 게 대표적인 예시다.
+-   요구하는 타입과 일치할 때까지 `Deref::deref()`가 호출된다.
+-   다음과 같은 경우에 해당 동작이 벌어진다.
+    -   `T: Deref<Target=U>` 일 때, `&T` -> `&U`로(T가 U에 대해서 Deref를 구현했을 때)
+    -   `T: DerefMut<Target=U>` 일 때, `&mut T` -> `&mut U`로
+    -   `T: Deref<Target=U>` 일 때, `&mut T` -> `&U`로(이 역은 성립하지 않는다. 가변 레퍼런스가 존재할 때 불변 레퍼런스는 존재할 수 없기 때문이다.)
+
+```rust
+fn hello(name: &str) {
+    println!("Hello, {name}!");
+}
+
+fn main() {
+    let m = MyBox::new(String::from("Rust"));
+    //*(m.deref())
+    hello(&m);
+}
+```
+
+```rust
+use std::ops::Deref;
+
+impl<T> Deref for MyBox<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+struct MyBox<T>(T);
+
+impl<T> MyBox<T> {
+    fn new(x: T) -> MyBox<T> {
+        MyBox(x)
+    }
+}
+
+fn hello(name: &str) {
+    println!("Hello, {name}!");
+}
+
+fn main() {
+    let m = MyBox::new(String::from("Rust"));
+    //Deref가 구현이 되어있지 않다면...
+    hello(&(*m)[..]);
+}
+```
+
+#### Drop 트레이트
+
+-   값이 스코프를 벗어낫을 때 동작을 커스터마이징할 수 있게 해준다.
+-   가변 레퍼런스 `self`를 파라미터로 받는 `drop()`을 구현한다. 이 메서드는 값이 스코프를 벗어나면 알아서 호출된다.
+-   모든 값은 역순으로 해제된다.
+-   prelude에 포함되어있다.
+
+```rust
+struct CustomSmartPointer {
+    data: String,
+}
+
+impl Drop for CustomSmartPointer {
+    fn drop(&mut self) {
+        println!("Dropping CustomSmartPointer with data `{}`!", self.data);
+    }
+}
+
+fn main() {
+    let c = CustomSmartPointer {
+        data: String::from("my stuff"),
+    };
+    let d = CustomSmartPointer {
+        data: String::from("other stuff"),
+    };
+    println!("CustomSmartPointers created.");
+}
+
+```
+
+##### 인위적으로 drop 호출
+
+-   다음처럼 인위적으로 `drop()`을 호출하는 건 불가능하다.
+-   이는 rust가 어차피 알아서 `drop()`을 호출하기 때문이다. 명시적으로 해제하면 double free 문제가 생긴다.
+-   `std::mem::drop`를 이용하면 rust가 알아서 `drop()`을 호출하는 타이밍을 인위적으로 앞당길 수 있다. 참고로 이 함수는 prelude다.
+
+```rust
+fn main() {
+    let c = CustomSmartPointer {
+        data: String::from("some data"),
+    };
+    println!("CustomSmartPointer created.");
+    c.drop();
+  //--^^^^--
+  //explicit destructor calls not allowed
+    println!("CustomSmartPointer dropped before the end of main.");
+}
+```
+
+```rust
+struct CustomSmartPointer {
+    data: String,
+}
+
+impl Drop for CustomSmartPointer {
+    fn drop(&mut self) {
+        println!("Dropping CustomSmartPointer with data `{}`!", self.data);
+    }
+}
+
+fn main() {
+    let c = CustomSmartPointer {
+        data: String::from("some data"),
+    };
+    println!("CustomSmartPointer created.");
+    drop(c);
+    println!("CustomSmartPointer dropped before the end of main.");
+}
+```
+
+#### Rc<T>
+
+-   레퍼런스 카운팅용 스마트 포인터.
+-   해당 타입은 싱글 스레드 시나리오에서만 사용한다.
+-   하나의 값이 여러 소유자를 가지고 있을 때 사용한다. 대표적으로 그래프 구조가 있다. 여러 에지가 하나의 버텍스를 가리킬 수 있기 떄문에 버텍스를 함부로 해제할 수 없다.
+-   불변 레퍼런스이므로 데이터 소유자가 여러명이어도 상관없다(readonly).
+
+```rust
+enum List {
+    Cons(i32, Box<List>),
+    Nil,
+}
+
+use crate::List::{Cons, Nil};
+
+fn main() {
+    let a = Cons(5, Box::new(Cons(10, Box::new(Nil))));
+    let b = Cons(3, Box::new(a));
+                            //- value moved here
+    let c = Cons(4, Box::new(a));
+                            //^ value used here after move
+}
+```
+
+```rust
+enum List {
+    Cons(i32, Rc<List>),
+    Nil,
+}
+
+use crate::List::{Cons, Nil};
+use std::rc::Rc;
+
+fn main() {
+    let a = Rc::new(Cons(5, Rc::new(Cons(10, Rc::new(Nil)))));
+    // a.clone()이 아니라, Rc::clone()을 써야함을 주의.
+    // 이래야 딥카피가 안 되기 때문이다.
+    let b = Cons(3, Rc::clone(&a));
+    let c = Cons(4, Rc::clone(&a));
+}
+```
+
+```rust
+fn main() {
+    let a = Rc::new(Cons(5, Rc::new(Cons(10, Rc::new(Nil)))));
+    println!("count after creating a = {}", Rc::strong_count(&a));
+    let b = Cons(3, Rc::clone(&a));
+    println!("count after creating b = {}", Rc::strong_count(&a));
+    {
+        let c = Cons(4, Rc::clone(&a));
+        println!("count after creating c = {}", Rc::strong_count(&a));
+    }
+    println!("count after c goes out of scope = {}", Rc::strong_count(&a));
+}
+/*
+count after creating a = 1
+count after creating b = 2
+count after creating c = 3
+count after c goes out of scope = 2
+*/
+```
+
+#### RefCell<T>
+
+-   borrowing 규칙을 런타임에 체크한다.
+-   즉, 컴파일은 되어도 프로그램이 패닉에 빠지거나 꺼질 수도 있다.
+-   런타임에 체크를 하기 때문에 그 값이 불변이라도 값을 수정할 수 있다. 이를 `Interior mutability` 패턴이라고 한다.
+-   싱글 스레드 시나리오에서만 쓴다.
+-   코드가 borrowing 규칙을 따르는지 검증하고 싶으나 컴파일러가 모종의 이유로 해당 규칙을 검증할 수 없을 때 유용하다.
+-   런타임에 borrow를 추적하므로 퍼포먼스상 불이익이 조금 있다.
+
+#### 레퍼런스 사이클과 메모리 누수
+
+-   대부분의 상황에서 메모리는 누수 없이 잘 관리되겠지만, 아주 드물게 그렇지 못한 일이 벌어질 수 있다. `Rc<T>`와 `RefCell<T>`를 같이 쓰면 레퍼런스간 사이클이 생기는데 이 때 메모리 누수가 발생할 수 있다.
+
+##### 레퍼런스 사이클 만들기
+
+```rust
+use crate::List::{Cons, Nil};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+#[derive(Debug)]
+enum List {
+    Cons(i32, RefCell<Rc<List>>),
+    Nil,
+}
+
+impl List {
+    fn tail(&self) -> Option<&RefCell<Rc<List>>> {
+        match self {
+            Cons(_, item) => Some(item),
+            Nil => None,
+        }
+    }
+}
+
+fn main() {
+    let a = Rc::new(Cons(5, RefCell::new(Rc::new(Nil))));
+
+    println!("a initial rc count = {}", Rc::strong_count(&a));
+    println!("a next item = {:?}", a.tail());
+
+    let b = Rc::new(Cons(10, RefCell::new(Rc::clone(&a))));
+
+    println!("a rc count after b creation = {}", Rc::strong_count(&a));
+    println!("b initial rc count = {}", Rc::strong_count(&b));
+    println!("b next item = {:?}", b.tail());
+
+    if let Some(link) = a.tail() {
+        *link.borrow_mut() = Rc::clone(&b);
+    }
+
+    println!("b rc count after changing a = {}", Rc::strong_count(&b));
+    println!("a rc count after changing a = {}", Rc::strong_count(&a));
+
+    // Uncomment the next line to see that we have a cycle;
+    // it will overflow the stack
+    // println!("a next item = {:?}", a.tail());
 }
 
 ```
