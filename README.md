@@ -3331,6 +3331,9 @@ fn main() {
 -   해당 타입은 싱글 스레드 시나리오에서만 사용한다.
 -   하나의 값이 여러 소유자를 가지고 있을 때 사용한다. 대표적으로 그래프 구조가 있다. 여러 에지가 하나의 버텍스를 가리킬 수 있기 떄문에 버텍스를 함부로 해제할 수 없다.
 -   불변 레퍼런스이므로 데이터 소유자가 여러명이어도 상관없다(readonly).
+-   스트롱 레퍼런스의 갯수로 할당 해제 여부를 검토한다.
+-   `clone()`으로 레퍼런스 카운트를 올린다. 이 때 올라가는 카운트는 스트롱 레퍼런스로 `string_count()`로 그 갯수를 확인할 수 있다. 스트롱 레퍼런스는 값의 소유권을 공유한다.
+-   위크 레퍼런스로도 만들 수 있는데 `downgrade()`를 호출하여 가능하다. `Weak<T>` 스마트 포인터를 리턴한다. 위크 레퍼런스가 남아있어도 할당 해제 되는데는 영향을 끼치지 않는다. 그래서 값을 얻어오는 `upgrade()` 메서드는 `Option<T>`를 리턴해 값이 유효한지 체크할 수 있게 해준다.
 
 ```rust
 enum List {
@@ -3391,16 +3394,65 @@ count after c goes out of scope = 2
 
 -   borrowing 규칙을 런타임에 체크한다.
 -   즉, 컴파일은 되어도 프로그램이 패닉에 빠지거나 꺼질 수도 있다.
--   런타임에 체크를 하기 때문에 그 값이 불변이라도 값을 수정할 수 있다. 이를 `Interior mutability` 패턴이라고 한다.
+-   어쨌든, borrowing 규칙은 지켜진다.
+-   런타임에 체크를 하기 때문에 그 값에 불변 레퍼런스가 있더라도 값을 수정하는 코드를 작성할 수 있다.
+-   이렇게 불변 레퍼런스가 있어도 가변 레퍼런스를 사용해 값을 바꿀 수 있게 하는 걸 `Interior mutability` 패턴이라고 한다.
 -   싱글 스레드 시나리오에서만 쓴다.
 -   코드가 borrowing 규칙을 따르는지 검증하고 싶으나 컴파일러가 모종의 이유로 해당 규칙을 검증할 수 없을 때 유용하다.
+-   가령, 값이 그 외부 환경에서는 변경될 수 없지만, 그 메서드 안에서는 변경될 수 있게 하고 싶을 때 유용하다.
 -   런타임에 borrow를 추적하므로 퍼포먼스상 불이익이 조금 있다.
+-   `borrow()`와 `borrow_mut()` 메서드로 스마트 포인터를 리턴한다. 전자는 `Ref<T>`, 후자는 `RefMut<T>`를 리턴한다. 둘다 `Deref`를 구현한다. `RefCell<T>`는 이들의 갯수를 각각 추적한다. 이를 통해 런타임에 borrowing 규칙(_다수의 불변 레퍼런스가 아니면 단 하나의 불변 레퍼런스가 존재할 수 있다_)을 추적한다.
+
+```rust
+impl Messenger for MockMessenger {
+    fn send(&self, message: &str) {
+        let mut one_borrow = self.sent_messages.borrow_mut();
+        let mut two_borrow = self.sent_messages.borrow_mut();
+        // 두개의 가변 레퍼런스는 불가능하다!
+        // thread 'main' panicked at 'already borrowed: BorrowMutError', src/lib.rs:60:53
+        one_borrow.push(String::from(message));
+        two_borrow.push(String::from(message));
+    }
+}
+```
+
+```rust
+#[derive(Debug)]
+enum List {
+    Cons(Rc<RefCell<i32>>, Rc<List>),
+    Nil,
+}
+
+use crate::List::{Cons, Nil};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+fn main() {
+    let value = Rc::new(RefCell::new(5));
+
+    let a = Rc::new(Cons(Rc::clone(&value), Rc::new(Nil)));
+
+    let b = Cons(Rc::new(RefCell::new(3)), Rc::clone(&a));
+    let c = Cons(Rc::new(RefCell::new(4)), Rc::clone(&a));
+
+    *value.borrow_mut() += 10;
+    //이렇게 다수의 값을 한번에 바꾸는 응용도 가능하다.
+    println!("a after = {:?}", a);
+    println!("b after = {:?}", b);
+    println!("c after = {:?}", c);
+}
+```
+
+> ### 주의!
+>
+> `*value.brrow_mut()`의 경우, `*`는 `value`가 아니라, `value.borrow_mut()`에 적용된다.
 
 #### 레퍼런스 사이클과 메모리 누수
 
--   대부분의 상황에서 메모리는 누수 없이 잘 관리되겠지만, 아주 드물게 그렇지 못한 일이 벌어질 수 있다. `Rc<T>`와 `RefCell<T>`를 같이 쓰면 레퍼런스간 사이클이 생기는데 이 때 메모리 누수가 발생할 수 있다.
-
-##### 레퍼런스 사이클 만들기
+-   대부분의 상황에서 메모리는 누수 없이 잘 관리되겠지만, 아주 드물게 그렇지 못한 일이 벌어질 수 있다.
+-   스마트 포인터를 사용해 레퍼런스 사이클이 벌어질 때 메모리 누수가 생길 수 있다.
+-   보기 힘든 광경이지만, 발생하면 재앙이다. 예시처럼 `RefCell<T>`과 `Rc<T>`를 동시에 사용할 때 벌어질 확률이 큰데 이런 코드를 작성할 때는 레퍼런스 사이클이 발생하지 않도록 조심해야 한다.
+-   `Weak<T>`를 활용하면 이런 경우를 피하는데 도움이 될 수 있다.
 
 ```rust
 use crate::List::{Cons, Nil};
@@ -3435,15 +3487,336 @@ fn main() {
     println!("b next item = {:?}", b.tail());
 
     if let Some(link) = a.tail() {
+        //a와 b 사이에 레퍼런스 사이클이 형성 된다.
         *link.borrow_mut() = Rc::clone(&b);
     }
 
     println!("b rc count after changing a = {}", Rc::strong_count(&b));
     println!("a rc count after changing a = {}", Rc::strong_count(&a));
 
-    // Uncomment the next line to see that we have a cycle;
-    // it will overflow the stack
+    // 그러므로 출력을 하면 결국, 스택 오버플로우가 발생한다.
     // println!("a next item = {:?}", a.tail());
 }
-
 ```
+
+```rust
+//https://jacksonshi.vercel.app/blog/rust/rc-weak-rust
+use std::cell::RefCell;
+use std::rc::Rc;
+
+#[derive(Debug)]
+struct Node {
+    next: Option<Rc<RefCell<Node>>>,
+}
+
+impl Drop for Node {
+    fn drop(&mut self) {
+        println!("Dropping");
+    }
+}
+
+fn main() {
+    let a = Rc::new(RefCell::new(Node {next: None}));
+    println!("a count: {:?}",  Rc::strong_count(&a)); //1
+    let b = Rc::new(RefCell::new(Node {next: Some(Rc::clone(&a))}));
+    println!("a count: {:?}",  Rc::strong_count(&a)); //2
+    println!("b count: {:?}",  Rc::strong_count(&b)); //1
+    let c = Rc::new(RefCell::new(Node {next: Some(Rc::clone(&b))}));
+
+    (*a).borrow_mut().next = Some(Rc::clone(&c));
+    println!("a count: {:?}",  Rc::strong_count(&a)); //2
+    println!("b count: {:?}",  Rc::strong_count(&b)); //2
+    println!("c count: {:?}",  Rc::strong_count(&c)); //2
+    // c -> b -> a -> c -> .... 의 사이클이 만들어진다.
+    // 중요한 건 레퍼런스가 마지막에 도달하여 결국, c,b,a 순으로 해제가 되어도, Rc<RefCell<Node>>가 드랍 되지 않는다는 것이다.
+    // 이미 각각의 카운트가 2인데, 아직 스트롱 레퍼런스가 1씩 남아있기 떄문이다.
+
+    // 스택 오버플로우
+    // println!("a {:?}",  &a);
+}
+```
+
+```rust
+//https://jacksonshi.vercel.app/blog/rust/rc-weak-rust
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
+
+#[derive(Debug)]
+struct Node {
+    next: Option<Rc<RefCell<Node>>>,
+    head: Option<Weak<RefCell<Node>>>,
+}
+
+impl Drop for Node {
+    fn drop(&mut self) {
+        println!("Dropping");
+    }
+}
+
+fn main() {
+    let a = Rc::new(RefCell::new(Node {next: None, head: None}));
+    println!("a strong count: {:?}, weak count: {:?}", Rc::strong_count(&a), Rc::weak_count(&a));
+    let b = Rc::new(RefCell::new(Node {next: Some(Rc::clone(&a)), head: None}));
+    println!("a strong count: {:?}, weak count: {:?}", Rc::strong_count(&a), Rc::weak_count(&a));
+    println!("b strong count: {:?}, weak count: {:?}", Rc::strong_count(&b), Rc::weak_count(&b));
+    let c = Rc::new(RefCell::new(Node {next: Some(Rc::clone(&b)), head: None}));
+
+    // Creates a reference cycle
+    (*a).borrow_mut().head = Some(Rc::downgrade(&c));
+    println!("a strong count: {:?}, weak count: {:?}", Rc::strong_count(&a), Rc::weak_count(&a));
+    println!("b strong count: {:?}, weak count: {:?}", Rc::strong_count(&b), Rc::weak_count(&b));
+    println!("c strong count: {:?}, weak count: {:?}", Rc::strong_count(&c), Rc::weak_count(&c));
+    //a -> c에서 위크 레퍼런스가 형성된다. 즉, c가 해제 되는 순간 c의 스트롱 레퍼런스가 0이 될 것이고, 연쇄적으로 나머지 레퍼런스들이 해제될 것이다.
+
+    println!("a {:?}",  &a);
+}
+```
+
+### 동시성 프로그래밍
+
+#### thread::spawn
+
+-   `thread::spawn()`을 통해 스레드를 만들 수 있다. 해당 메서드는 실행할 클로저를 파라미터로 받고 `JoinHandle`을 리턴한다. 이를 통해 스레드 조인을 할 수 있다.
+
+```rust
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let handle = thread::spawn(|| {
+        for i in 1..10 {
+            println!("hi number {} from the spawned thread!", i);
+            thread::sleep(Duration::from_millis(1));
+        }
+    });
+
+    for i in 1..5 {
+        println!("hi number {} from the main thread!", i);
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    handle.join().unwrap();
+}
+```
+
+```rust
+use std::thread;
+
+fn main() {
+    let v = vec![1, 2, 3];
+
+    let handle = thread::spawn(move || {
+        //println!은 소유권을 취한다.
+        println!("Here's a vector: {:?}", v);
+    });
+
+    handle.join().unwrap();
+}
+```
+
+#### 메시지 패싱
+
+-   채널을 사용해 스레드간 메시지로 데이터를 공유한다.
+-   값에 대해 단일 소유권을 유지할 수 있다.
+-   채널은 transimitter와 recevier의 개념을 가지고 있다. 말그대로 송신자, 수신자이고, 한쪽이라도 닫히면 채널은 드랍된다.
+-   `mpsc::channel()`로 만들 수 있다. `mpsc`는 모듈이름인데 *multiple producer, single consumer*를 의미한다.
+
+```rust
+use std::sync::mpsc;
+use std::thread;
+
+fn main() {
+    let (tx, rx) = mpsc::channel(); // 송신자, 수신자
+
+    //송신자의 소유권을 옮겨줄 필요가 있다.
+    thread::spawn(move || {
+        let val = String::from("hi");
+        tx.send(val).unwrap();
+        //send는 소유권을 요구한다.
+        println!("val is {}", val);
+                            //^^^ value borrowed here after move
+    });
+
+    //recv는 블로킹 함수, try_recv는 논블로킹 함수다.
+    let received = rx.recv().unwrap();
+    println!("Got: {}", received);
+}
+```
+
+```rust
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let vals = vec![
+            String::from("hi"),
+            String::from("from"),
+            String::from("the"),
+            String::from("thread"),
+        ];
+
+        for val in vals {
+            tx.send(val).unwrap();
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+
+    for received in rx {
+        println!("Got: {}", received);
+    }
+}
+```
+
+```rust
+    // --snip--
+
+    let (tx, rx) = mpsc::channel();
+    //이런 방식으로 다수의 프로듀서를 만들 수 있다.
+    let tx1 = tx.clone();
+    thread::spawn(move || {
+        let vals = vec![
+            String::from("hi"),
+            String::from("from"),
+            String::from("the"),
+            String::from("thread"),
+        ];
+
+        for val in vals {
+            tx1.send(val).unwrap();
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+
+    thread::spawn(move || {
+        let vals = vec![
+            String::from("more"),
+            String::from("messages"),
+            String::from("for"),
+            String::from("you"),
+        ];
+
+        for val in vals {
+            tx.send(val).unwrap();
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+
+    for received in rx {
+        println!("Got: {}", received);
+    }
+
+    // --snip--
+```
+
+#### 공유 메모리
+
+-   일반적으로 스레드가 프로세스 내에서 값을 공유하는 방식. rust의 관점에선 값에 대해 **다수의 소유자를 허가**한다고 보면 된다.
+-   `Mutex<T>`와 `Arc<T>`가 대표적인데 각각 `RefCall<T>`과 `Rc<T>`의 멀티 스레드 버전이다.
+-   `Mutex<T>`는 interior mutability를 제공한다.
+-   `Arc<T>`는 *atomically refernce counted type*을 의미한다고 한다. `Rc<T>`의 카운팅 로직이 스레드 세이프하지 않기 때문에 멀티 스레드에서는 쓸 수 없다. 참고로 rust는 lock-free 구현을 위한 `std::sync::atomic` 타입도 가지고 있다.
+-   rust는 퍼포먼스를 위해 모든 타입을 굳이 atomic하게 구현하지 않는다.
+
+```rust
+use std::sync::Mutex;
+
+fn main() {
+    let m = Mutex::new(5);
+
+    {
+        //unwarp()을 통해 이미 락을 취득한 스레드가 패닉에 빠졌는지를 확인할 수 있다. 이 스레드도 패닉에 빠진다.
+        //lock()은 스마트포인터 `MutextGuard`를 리턴한다.
+        let mut num = m.lock().unwrap();
+        *num = 6;
+    }
+
+    println!("m = {:?}", m);
+}
+```
+
+```rust
+use std::rc::Rc;
+use std::sync::Mutex;
+use std::thread;
+
+fn main() {
+    let counter = Rc::new(Mutex::new(0));
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let counter = Rc::clone(&counter);
+        //`Rc<Mutex<i32>>` cannot be sent between threads safely
+        //the trait `Send` is not implemented for `Rc<Mutex<i32>>`
+        //Rc는 레퍼런스 카운터를 스레드 세이프하게 관리할 수 없다.
+        let handle = thread::spawn(move || {
+            let mut num = counter.lock().unwrap();
+
+            *num += 1;
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    println!("Result: {}", *counter.lock().unwrap());
+}
+```
+
+```rust
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+fn main() {
+    let counter = Arc::new(Mutex::new(0));
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let counter = Arc::clone(&counter);
+        let handle = thread::spawn(move || {
+            let mut num = counter.lock().unwrap();
+
+            *num += 1;
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    println!("Result: {}", *counter.lock().unwrap());
+}
+```
+
+#### 동시성 기능 확장
+
+-   rust 언어 자체로는 딱히 동시성 제어 기능을 제공하지 않는다. 지금껏 살펴본 건 스탠다드 라이브러리의 일부였을 뿐이다.
+-   즉, 독자적인 동시성 기능을 구현할 수 있다는 의미가 되는데 `std:marker` 내의 `Sync`와 `Send` 트레이트로 가능하다.
+
+##### `Send`
+
+-   해당 트레이트를 구현한 타입 값의 소유권이 스레드간 이동이 가능한지를 나타낸다.
+-   대부분의 rust 타입이 `Send`를 구현한다. `Rc<T>`는 이를 구현하지 않는 드문 예외다.
+-   전부 `Send`로 이루어진 타입은 알아서 `Send`로 마킹된다.
+
+##### `Sync`
+
+-   다수의 스레드가 접근해도 안전함을 나타내는 트레이트다.
+-   즉, 타입 `T`가 `Sync`를 구현하고, `&T`가 `Send`를 구현한다면 레퍼런스가 안전하게 스레드간 이동이 된다는 의미다.
+-   전부 `Sync`로 이루어진 타입은 알아서 `Sync`로 마킹된다.
+-   `Rc<T>`와 `RefCell<T>`는 `Sync`를 구현하지 않는다.
+
+##### 그래서?
+
+-   `Send`나 `Sync`로 이루어진 타입은 알아서 그걸 따라가므로 웬만해선 이런 트레이트를 직접 구현할 필요가 없다.
+-   애초에 마킹 트레이트라 메서드도 없다.
+-   알아서 조심하라는 걸까?
+
+### OOP 기능
+
+-   OOP 관점에서 rust를 살펴본다.
