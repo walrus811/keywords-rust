@@ -3820,3 +3820,923 @@ fn main() {
 ### OOP 기능
 
 -   OOP 관점에서 rust를 살펴본다.
+
+#### 트레이트 오브젝트
+
+-   rust는 상속을 지원하지 않는다. 하지만 트레이트를 통해 OOP의 다형성을 구현할 수 있다.
+-   트레이트 오브젝트는 **특정 트레이트를 구현한 타입의 인스턴스**, 또는 **런타임에 타입 내 트레이트 메서드의 룩업 테이블**을 의미한다. 전자는 너무 당연하니 여기서는 후자에 대해 알아본다.
+-   & 레퍼런스나, `Box<T>` 같은 스마트포인터와 같은 **포인터**를 지정한 뒤, `dyn` 키워드를 이용해 트레이트 오브젝트를 만들 수 있다.
+-   제네릭 타입 파라미터는 단 하나의 concrete 타입에 대해서만 사용할 수 있지만, 트레이트 오브젝트는 트레이트 정의를 만족하는 다수의 concrete 타입에 대해 사용할 수 있다. 일종의 덕 타이핑처럼 동작한다. 이 구체적인 타입은 런타임에 결정 되는 것으로 보인다.
+
+```rust
+pub trait Draw {
+    fn draw(&self);
+}
+
+//Draw 트레이트를 구현한 T1,T2가 존재한다면,
+pub struct Screen<T: Draw> {
+    //components는 T1의 벡터이거나, T2의 벡터에 불과하다.
+    pub components: Vec<T>,
+}
+impl<T> Screen<T>
+where
+    T: Draw,
+{
+    pub fn run(&self) {
+        for component in self.components.iter() {
+            component.draw();
+        }
+    }
+}
+```
+
+```rust
+pub trait Draw {
+    fn draw(&self);
+}
+
+//Draw 트레이트를 구현한 T1,T2가 존재한다면,
+pub struct Screen {
+    //벡터는 T1도, T2도 담을 수 있다.
+    pub components: Vec<Box<dyn Draw>>,
+}
+
+impl Screen {
+    pub fn run(&self) {
+        for component in self.components.iter() {
+            component.draw();
+        }
+    }
+}
+```
+
+```rust
+//mod gui
+pub struct Button {
+    pub width: u32,
+    pub height: u32,
+    pub label: String,
+}
+
+impl Draw for Button {
+    fn draw(&self) {
+        // code to actually draw a button
+    }
+}
+
+struct SelectBox {
+    width: u32,
+    height: u32,
+    options: Vec<String>,
+}
+
+impl Draw for SelectBox {
+    fn draw(&self) {
+        // code to actually draw a select box
+    }
+}
+
+//main
+use gui::{Button, Screen};
+
+fn main() {
+    //components는 Draw 트레이트를 구현한 여러 타입을 담을 수 있는 벡터가 되었다.
+    let screen = Screen {
+        components: vec![
+            Box::new(SelectBox {
+                width: 75,
+                height: 10,
+                options: vec![
+                    String::from("Yes"),
+                    String::from("Maybe"),
+                    String::from("No"),
+                ],
+            }),
+            Box::new(Button {
+                width: 50,
+                height: 10,
+                label: String::from("OK"),
+            }),
+        ],
+    };
+
+    screen.run();
+}
+```
+
+> `static dispatch` vs `dynamic dispatch`
+>
+> 제네릭에 트레이트 바운드를 지정하면 컴파일 타임에 그에 해당 하는 코드를 만드는 `monomorphization` 과정이 벌어진다. 이런 과정으로 벌어지는 결과를 `static dispatch`라고 한다. 이 경우, 컴파일러가 컴파일 타임에 어떤 메서드를 호출할지 알고 있는 셈이다.
+>
+> 이와 반대 되는 개념이 `dynamic dispatch`인데 컴파일러가 컴파일 타임에 무엇을 호출하지 모르는 것이다. 즉, 런타임에 무엇을 실행할지 결정하는 것이다. 트레이트 오브젝트가 이런 동작을 유발한다. 어떤 메서드를 호출할지 런타임에 결정 하기 위해, 트레이트 오브젝트를 정의시 포인터를 사용하는 것이다. 하지만 당연히 런타임 성능에 불이익이 존재한다.
+
+#### State 패턴 구현으로 알아보는 rust 활용
+
+```rust
+//정석적인 OOP 패턴으로 구현한 State 패턴
+pub struct Post {
+    state: Option<Box<dyn State>>,
+    content: String,
+}
+
+impl Post {
+    pub fn new() -> Post {
+        Post {
+            state: Some(Box::new(Draft {})),
+            content: String::new(),
+        }
+    }
+
+    pub fn add_text(&mut self, text: &str) {
+        self.content.push_str(text);
+    }
+
+    pub fn request_review(&mut self) {
+        if let Some(s) = self.state.take() {
+            self.state = Some(s.request_review())
+        }
+    }
+
+    pub fn approve(&mut self) {
+        if let Some(s) = self.state.take() {
+            self.state = Some(s.approve())
+        }
+    }
+
+    pub fn content(&self) -> &str {
+        self.state.as_ref().unwrap().content(self)
+    }
+}
+
+trait State {
+    fn request_review(self: Box<Self>) -> Box<dyn State>;
+    fn approve(self: Box<Self>) -> Box<dyn State>;
+    fn content<'a>(&self, _post: &'a Post) -> &'a str {
+        ""
+    }
+}
+
+struct Draft {}
+
+struct PendingReview {}
+
+struct Published {}
+
+impl State for Draft {
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        Box::new(PendingReview {})
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+}
+
+impl State for PendingReview {
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        Box::new(Published {})
+    }
+}
+
+impl State for Published {
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+    //Published일 때만 content를 출력하고 싶다.
+    fn content<'a>(&self, post: &'a Post) -> &'a str {
+        &post.content
+    }
+}
+/**
+ * 트레이트 오브젝트를 이용해 이런 구현을 할 수 있지만,
+ * 실제 사용시 주의를 안 하면 content가 노출 되어버리는 등,
+ * 생각보다 문제가 터질 확률이 높은 코드임에는 틀림 없다.
+*/
+```
+
+```rust
+// rust의 소유권을 이용해서 상태를 코드에 녹여내기
+pub struct Post {
+    content: String,
+}
+
+pub struct DraftPost {
+    content: String,
+}
+
+impl Post {
+    pub fn new() -> DraftPost {
+        DraftPost {
+            content: String::new(),
+        }
+    }
+
+    //다른 struct에는 없다.
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+}
+
+impl DraftPost {
+    // --snip--
+    pub fn add_text(&mut self, text: &str) {
+        self.content.push_str(text);
+    }
+    //상태 전환시 소유권을 넘겨 아예 이전 상태를 무효화 시킨다.
+    pub fn request_review(self) -> PendingReviewPost {
+        PendingReviewPost {
+            content: self.content,
+        }
+    }
+}
+
+pub struct PendingReviewPost {
+    content: String,
+}
+
+impl PendingReviewPost {
+    //상태 전환시 소유권을 넘겨 아예 이전 상태를 무효화 시킨다.
+    pub fn approve(self) -> Post {
+        Post {
+            content: self.content,
+        }
+    }
+}
+/**
+ * 이렇게 소유권을 이용해 상태 전환 자체를 타입으로 녹여낼 수도 있다.
+ * OOP 방식이 유일한 답은 아니다.
+*/
+```
+
+```rust
+use blog::Post;
+
+fn main() {
+    let mut post = Post::new();
+
+    post.add_text("I ate a salad for lunch today");
+
+    let post = post.request_review();
+
+    let post = post.approve();
+
+    assert_eq!("I ate a salad for lunch today", post.content());
+}
+```
+
+### 패턴과 매칭
+
+#### 패턴이 사용되는 곳
+
+##### `match` arm
+
+-   match는 `exhaustive`하게 값을 검증한다.
+
+```rust
+/*
+match VALUE {
+    PATTERN => EXPRESSION,
+    PATTERN => EXPRESSION,
+    PATTERN => EXPRESSION,
+}
+*/
+match x {
+    None => None,
+    Some(i) => Some(i + 1),
+}
+```
+
+##### 조건부 `if let` 표현식
+
+-   한 가지 패턴을 매칭할 때 유용하다.
+-   `else` 같은 것과도 쓸 수 있어 `match` 보다 조금 더 유연하게 쓸 수 있다.
+-   다만 `exhaustive`하게 값을 검증하지 않는다.
+
+```rust
+fn main() {
+    let favorite_color: Option<&str> = None;
+    let is_tuesday = false;
+    let age: Result<u8, _> = "34".parse();
+
+    if let Some(color) = favorite_color {
+        println!("Using your favorite color, {color}, as the background");
+    } else if is_tuesday {
+        println!("Tuesday is green day!");
+    } else if let Ok(age) = age {
+        if age > 30 {
+            println!("Using purple as the background color");
+        } else {
+            println!("Using orange as the background color");
+        }
+    } else {
+        println!("Using blue as the background color");
+    }
+}
+```
+
+##### `while let` 조건부 루프
+
+-   `if let`과 유사하다.
+
+```rust
+let mut stack = Vec::new();
+
+stack.push(1);
+stack.push(2);
+stack.push(3);
+
+while let Some(top) = stack.pop() {
+    println!("{}", top);
+}
+```
+
+##### `for` 루프
+
+-   `for x in y`에서 `x`가 패턴이 된다.
+
+```rust
+let v = vec!['a', 'b', 'c'];
+
+//(index, value)로 분해하는 셈
+for (index, value) in v.iter().enumerate() {
+    println!("{} is at index {}", value, index);
+}
+```
+
+##### `let` 구문
+
+-   `let x = 5;`에서 x도 패턴이다.
+
+```rust
+//let PATTERN = EXPRESSION;
+let (x, y, z) = (1, 2, 3);
+```
+
+##### 함수 파라미터
+
+-   함수 이름이 패턴이다.
+
+```rust
+fn print_coordinates(&(x, y): &(i32, i32)) {
+    println!("Current location: ({}, {})", x, y);
+}
+
+fn main() {
+    let point = (3, 5);
+    print_coordinates(&point);
+}
+```
+
+#### Refutability
+
+-   매칭에 항상 성공하는 패턴을 `irrefutable`하다고 하고, 매칭에 실패할 수 있는 패턴을 `refutable`하다고 한다. `let x = 5`의 `x`가 전자에 해당한다. 반면 `if let Some(x) = a_value`의 `Some(x)`는 후자에 해당한다.
+
+```rust
+let Some(x) = some_option_value;
+// ^^^^^^^ pattern `None` not covered
+//note: `let` bindings require an "irrefutable pattern", like a `struct` or an `enum` with only one variant
+```
+
+```rust
+if let x = 5 {
+// ^^^^^^^^^
+//= note: `#[warn(irrefutable_let_patterns)]` on by default
+//= note: this pattern will always match, so the `if let` is useless
+    println!("{}", x);
+};
+```
+
+#### 패턴 목록
+
+##### 리터럴
+
+```rust
+let x = 1;
+
+match x {
+    1 => println!("one"),
+    2 => println!("two"),
+    3 => println!("three"),
+    _ => println!("anything"),
+}
+```
+
+##### 변수
+
+```rust
+    let x = Some(5);
+    let y = 10;
+    //match가 새로운 스코프를 정의한다.
+    //그래서 Some(y) = Some(5)가 매칭이 되어버린다.
+    match x {
+        Some(50) => println!("Got 50"),
+        Some(y) => println!("Matched, y = {y}"),
+        _ => println!("Default case, x = {:?}", x),
+    }
+
+    println!("at the end: x = {:?}, y = {y}", x);
+    //Matched, y = 5
+    //at the end: x = Some(5), y = 10
+```
+
+##### `|`, multiple pattern
+
+```rust
+    let x = 1;
+
+    match x {
+        1 | 2 => println!("one or two"),
+        3 => println!("three"),
+        _ => println!("anything"),
+    }
+```
+
+##### 레인지(`..=`)
+
+```rust
+let x = 5;
+
+match x {
+    1..=5 => println!("one through five"),
+    _ => println!("something else"),
+}
+
+let x = 'c';
+
+match x {
+    'a'..='j' => println!("early ASCII letter"),
+    'k'..='z' => println!("late ASCII letter"),
+    _ => println!("something else"),
+}
+```
+
+##### destructuring
+
+```rust
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    let p = Point { x: 0, y: 7 };
+
+    let Point { x: a, y: b } = p;
+    //short-hand
+    //let Point { x, y } = p;
+    assert_eq!(0, a);
+    assert_eq!(7, b);
+}
+```
+
+```rust
+fn main() {
+    let p = Point { x: 0, y: 7 };
+
+    match p {
+        Point { x, y: 0 } => println!("On the x axis at {x}"),
+        Point { x: 0, y } => println!("On the y axis at {y}"),
+        Point { x, y } => {
+            println!("On neither axis: ({x}, {y})");
+        }
+    }
+}
+```
+
+```rust
+enum Message {
+    Quit,
+    Move { x: i32, y: i32 },
+    Write(String),
+    ChangeColor(i32, i32, i32),
+}
+
+fn main() {
+    let msg = Message::ChangeColor(0, 160, 255);
+
+    match msg {
+        Message::Quit => {
+            println!("The Quit variant has no data to destructure.");
+        }
+        Message::Move { x, y } => {
+            println!(
+                "Move in the x direction {x} and in the y direction {y}"
+            );
+        }
+        Message::Write(text) => {
+            println!("Text message: {text}");
+        }
+        Message::ChangeColor(r, g, b) => println!(
+            "Change the color to red {r}, green {g}, and blue {b}",
+        ),
+    }
+}
+```
+
+```rust
+enum Color {
+    Rgb(i32, i32, i32),
+    Hsv(i32, i32, i32),
+}
+
+enum Message {
+    Quit,
+    Move { x: i32, y: i32 },
+    Write(String),
+    ChangeColor(Color),
+}
+
+fn main() {
+    let msg = Message::ChangeColor(Color::Hsv(0, 160, 255));
+
+    match msg {
+        //이렇게 복합적인 패턴도 간단하게!
+        Message::ChangeColor(Color::Rgb(r, g, b)) => {
+            println!("Change color to red {r}, green {g}, and blue {b}");
+        }
+        Message::ChangeColor(Color::Hsv(h, s, v)) => println!(
+            "Change color to hue {h}, saturation {s}, value {v}"
+        ),
+        _ => (),
+    }
+}
+```
+
+```rust
+let ((feet, inches), Point { x, y }) = ((3, 10), Point { x: 3, y: -10 });
+```
+
+##### 값을 무시하는 패턴
+
+-   `_`, 다른 패턴 안에 `_`, `_`로 시작하는 이름, 값의 나머지 부분을 무시하는 `..`.
+
+```rust
+fn foo(_: i32, y: i32) {
+    println!("This code only uses the y parameter: {}", y);
+}
+
+fn main() {
+    foo(3, 4);
+}
+```
+
+```rust
+let mut setting_value = Some(5);
+let new_setting_value = Some(10);
+
+match (setting_value, new_setting_value) {
+    //Some인지만 확인
+    (Some(_), Some(_)) => {
+        println!("Can't overwrite an existing customized value");
+    }
+    _ => {
+        setting_value = new_setting_value;
+    }
+}
+
+println!("setting is {:?}", setting_value);
+```
+
+```rust
+let numbers = (2, 4, 8, 16, 32);
+
+match numbers {
+    (first, _, third, _, fifth) => {
+        println!("Some numbers: {first}, {third}, {fifth}")
+    }
+}
+```
+
+````rust
+fn main() {
+    //x는 이제 쓰지 않는다. 경고가 사라짐.
+    let _x = 5;
+    let y = 10;
+}
+
+```rust
+//컴파일 안 됨, s의 소유권이 _s로 이동!
+let s = Some(String::from("Hello!"));
+
+if let Some(_s) = s {
+    println!("found a string");
+}
+
+println!("{:?}", s);
+
+//컴파일 됨
+let s = Some(String::from("Hello!"));
+
+if let Some(_) = s {
+    println!("found a string");
+}
+
+println!("{:?}", s);
+````
+
+```rust
+struct Point {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
+let origin = Point { x: 0, y: 0, z: 0 };
+
+match origin {
+    //x말고는 무시
+    // y: _, z: _로 안 써도 됨.
+    Point { x, .. } => println!("x is {}", x),
+}
+```
+
+```rust
+fn main() {
+    let numbers = (2, 4, 8, 16, 32);
+
+    match numbers {
+        (first, .., last) => {
+            println!("Some numbers: {first}, {last}");
+        }
+    }
+}
+```
+
+```rust
+fn main() {
+    let numbers = (2, 4, 8, 16, 32);
+
+    match numbers {
+        //어디까지 매칭해야하는지 애매함
+        (.., second, ..) => {
+       //--          ^^ can only be used once per tuple pattern
+            println!("Some numbers: {}", second)
+        },
+    }
+    //error: could not compile `patterns` due to previous error
+}
+```
+
+##### 매치 가드
+
+-   `match` 암에 붙는 추가적인 조건문.
+-   조금 더 정밀하고 안전하게 매칭할 수 있는 대신 `exhaustiveness`는 사라짐.
+
+```rust
+let num = Some(4);
+
+match num {
+    Some(x) if x % 2 == 0 => println!("The number {} is even", x),
+    Some(x) => println!("The number {} is odd", x),
+    None => (),
+}
+```
+
+```rust
+fn main() {
+    let x = Some(5);
+    let y = 10;
+
+    match x {
+        Some(50) => println!("Got 50"),
+        // 소유권이 이동하던 문제 해결
+        Some(n) if n == y => println!("Matched, n = {n}"),
+        _ => println!("Default case, x = {:?}", x),
+    }
+
+    println!("at the end: x = {:?}, y = {y}", x);
+}
+```
+
+##### `@` 바인딩
+
+-   `@` 연산자는 패턴에 매칭된 값을 해당 스코프에서 캡처할 수 있게 해준다.
+
+```rust
+enum Message {
+    Hello { id: i32 },
+}
+
+let msg = Message::Hello { id: 5 };
+
+match msg {
+    Message::Hello {
+        id: id_variable @ 3..=7,
+    } => println!("Found an id in range: {}", id_variable),
+    Message::Hello { id: 10..=12 } => {
+        println!("Found an id in another range")
+    }
+    Message::Hello { id } => println!("Found some other id: {}", id),
+}
+```
+
+### 고급 기능
+
+#### unsafe
+
+-   `unsafe`한 동작이 존재하는데는 두가지 이유가 있다. 하나는 당연히 프로그램을 실행하는 하드웨어와 OS가 그렇지 못하기 때문이고, 나머지 하나는 rust의 정적 분석기와 컴파일러는 굉장히 보수적이기 떄문이다. 그래서 동작할 수 있는 코드임에도 컴파일을 거절하는 경우가 있다.
+-   `unsafe` 키워드를 통해 rust 컴파일러에게 해당 코드 블록이 안전하지 않음을 알린다.
+-   안전하지 않은 코드는 다음 다섯가지 동작을 할 수 있다(*unsafe superpower*라고 부른다).
+    -   포인터(raw) 할당 해제
+    -   안전하지 않은 함수나 메서드 호출
+    -   가변 static 변수 접근 및 수정
+    -   unsafe 트레이트 구현
+    -   `union` 필드에 접근.
+-   `unsafe`는 버로우 체커를 비활성화하거나 rust의 세이프티 체크를 비활성화하지 않는다. 단지 위처럼 평소에는 할 수 없는 다섯가지 일을 할 수 있게 해줄 뿐이고, 컴파일러가 체크하지 않을 뿐이다. 여전히 rust의 세이프티 체크가 적용된다.
+-   메모리 버그가 여기서 발생할 것이므로 가급적 이 부분을 작게 유지하는 게 중요하다.
+
+##### 포인터(raw) 할당 해제
+
+-   그냥 포인터를 말하는 거 같다.
+-   `*const T`와 `*mut T`가 존재한다. 전자는 가리키는 값을 변경할 수 없는 걸 의미한다.
+-   레퍼런스와 스마트포인터와 다르게 다음 동작이 가능하다.
+    -   가변이든, 불변이든 원하는 갯수의 포인터를 원하는 만큼 선언할 수 있다.
+    -   유효하지 않은 메모리 공간을 가리킬 수 있다.
+    -   null이 될 수 있다.
+    -   자동으로 할당 해제가 안 된다.
+-   그럼에도 이런 위험한 짓을 하는 건 로우레벨 연산의 인터페이스가 그렇거나 _더 나은_ 퍼포먼스를 위해서이다.
+
+```rust
+fn main() {
+    let mut num = 5;
+    // 선언 자체는 할 수 있지만 unsafe 블록 없이는 deref가 불가능하다.
+    let r1 = &num as *const i32;
+    let r2 = &mut num as *mut i32;
+
+//error[E0133]: dereference of raw pointer is unsafe and requires unsafe function or block
+    //unsafe{
+    println!("r1 is: {}", *r1);
+                        //^^^ dereference of raw pointer
+    println!("r2 is: {}", *r2);
+                        //^^^ dereference of raw pointer
+    //}
+}
+```
+
+```rust
+//실제 deref하기전엔 이런 것까지 된다.
+let address = 0x012345usize;
+let r = address as *const i32;
+```
+
+##### 안전하지 않은 함수나 메서드 호출
+
+```rust
+fn main() {
+    //함수가 unsafe이므로, 굳이 바디 안에 unsafe를 쓰지 않아도 된다.
+    unsafe fn dangerous() {}
+
+    unsafe {
+        dangerous();
+    }
+}
+```
+
+```rust
+//T에 대한 메서드가 표준 라이브러리에 존재하는데 잘 생각해보면 unsafe한 동작인데 잘 동작한다.
+fn split_at_mut(values: &mut [i32], mid: usize) -> (&mut [i32], &mut [i32]) {
+    let len = values.len();
+
+    assert!(mid <= len);
+
+    //사실 슬라이스간 겹치는 부분이 없으므로 문제 될 것 없는 코드다.
+    //하지만 rust가 판단할 때 가변 레퍼런스를 두 개만드는 동작이므로 버로우 규칙에 어긋난다.
+    (&mut values[..mid], &mut values[mid..])
+    //first mutable borrow occurs here
+    //second mutable borrow occurs here
+    //returning this value requires that `*values` is borrowed for `'1`
+}
+```
+
+```rust
+use std::slice;
+//바깥에 unsafe를 안 씀으로써 함수 시그니처에는 unsafe가 없다.
+//다만 이 같은 상황처럼 스스로가 보장할 수 있는 상황에서만 이래야 한다.
+fn split_at_mut(values: &mut [i32], mid: usize) -> (&mut [i32], &mut [i32]) {
+    let len = values.len();
+    let ptr = values.as_mut_ptr();
+
+    assert!(mid <= len);
+
+    unsafe {
+        (
+            slice::from_raw_parts_mut(ptr, mid),
+            slice::from_raw_parts_mut(ptr.add(mid), len - mid),
+        )
+    }
+}
+
+fn main() {
+    let mut vector = vec![1, 2, 3, 4, 5, 6];
+    let (left, right) = split_at_mut(&mut vector, 3);
+}
+```
+
+```rust
+fn main() {
+    use std::slice;
+
+    let address = 0x01234usize;
+    let r = address as *mut i32;
+    //이렇게 안전하지 못한 코드를 작성하지 않도록 주의
+    let values: &[i32] = unsafe { slice::from_raw_parts_mut(r, 10000) };
+}
+```
+
+-   FFI시 unsafe가 필요할 확률이 다분하다. `extern`을 이용해 FFI를 하고, ABI 목록을 작성한다.
+
+```rust
+extern "C" {
+    fn abs(input: i32) -> i32;
+}
+
+fn main() {
+    unsafe {
+        println!("Absolute value of -3 according to C: {}", abs(-3));
+    }
+}
+```
+
+> 네임 맹글링 방지
+>
+> `#[no_mangle]` 어노테이션을 쓴다.
+>
+> ```rust
+> //이렇게 단일 함수만 포함할 수 있다. 이 땐 unsafe가 없어도 된다.
+>
+> #[no_mangle]
+> pub extern "C" fn call_from_c() {
+>     println!("Just called a Rust function from C!");
+> }
+> ```
+
+##### 가변 static 변수 접근 및 수정
+
+-   일반적으로 rust는 전역변수를 지원하지 않는다. 소유권의 개념 떄문에 멀티 스레드 환경에서 데이터 레이스가 발생한다.
+-   그런데 static 변수를 지원하긴 한다. 기본적으로 불변이며 참조하는 메모리 위치가 변하지 않는다.
+-   하지만 `static mut`로 가변 선언을 하면 `unsafe`를 써야만 해당 변수를 사용할 수 있다.
+
+```rust
+static mut COUNTER: u32 = 0;
+
+fn add_to_count(inc: u32) {
+    unsafe {
+        COUNTER += inc;
+    }
+}
+
+fn main() {
+    add_to_count(3);
+
+    unsafe {
+        println!("COUNTER: {}", COUNTER);
+    }
+}
+```
+
+##### unsafe 트레이트 구현
+
+-   포인터를 다뤄야하는 `Send`와 `Sync` 트레이트가 대표적인 예시라는데?
+-   메서드 중 하나라도 컴파일러가 unsafe하다고 하면 해야함.
+
+```rust
+unsafe trait Foo {
+    // methods go here
+}
+
+unsafe impl Foo for i32 {
+    // method implementations go here
+}
+
+fn main() {}
+```
+
+##### union 필드에 접근
+
+-   C의 union이요.
+
+```rust
+#[repr(C)]
+union MyUnion {
+    f1: u32,
+    f2: f32,
+}
+```
+
+#### 트레이트
+
+#### 타입
+
+#### 함수
+
+#### 매크로
+
+### 기타
