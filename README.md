@@ -4733,10 +4733,555 @@ union MyUnion {
 
 #### 트레이트
 
+##### associated type
+
+-   트레이트가 제공하는 메서드의 타입 플레이스 홀더를 나타내는 타입.
+-   제네릭은 트레이트 구현에 유연성을 주기 위함이라면, associated type은 트레이트 구현을 한정하기 위해서이다.
+
+```rust
+struct Counter {
+    count: u32,
+}
+
+impl Counter {
+    fn new() -> Counter {
+        Counter { count: 0 }
+    }
+}
+
+impl Iterator for Counter {
+    //Counter에 대한 Iterator 구현을 한정한다.
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // --snip--
+        if self.count < 5 {
+            self.count += 1;
+            Some(self.count)
+        } else {
+            None
+        }
+    }
+}
+
+//제네릭이었다면 여러 구현이 가능했을 것이다.
+pub trait Iterator<T> {
+    fn next(&mut self) -> Option<T>;
+}
+```
+
+##### 디폴트 타입 파라미터
+
+-   제네릭에 디폴트 타입 파라미터를 줄 수 있음.
+
+```rust
+//std::ops는 오퍼레이터 오버로딩을 가능케 해줌
+use std::ops::Add;
+
+//디폴트 파라미터로 Self지정
+trait Add<Rhs=Self> {
+    type Output;
+
+    fn add(self, rhs: Rhs) -> Self::Output;
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Add for Point {
+    type Output = Point;
+
+    //Rhs의 디폴트 파라미터가 Self이므로 별다른 타입 파라터를 쓰지 않아도 됨
+    fn add(self, other: Point) -> Point {
+        Point {
+            x: self.x + other.x,
+            y: self.y + other.y,
+        }
+    }
+}
+
+fn main() {
+    assert_eq!(
+        Point { x: 1, y: 0 } + Point { x: 2, y: 3 },
+        Point { x: 3, y: 3 }
+    );
+}
+```
+
+```rust
+use std::ops::Add;
+
+struct Millimeters(u32);
+struct Meters(u32);
+
+//디폴트 타입을 안 쓰고 지정하는 경우
+//이런 걸 뉴타입 패턴이라고 한다.
+//아래 참조
+impl Add<Meters> for Millimeters {
+    type Output = Millimeters;
+
+    fn add(self, other: Meters) -> Millimeters {
+        Millimeters(self.0 + (other.0 * 1000))
+    }
+}
+```
+
+##### 같은 이름의 메서드를 호출하는 법
+
+-   타입은 다수의 트레이트를 구현할 수 있고, 그 트레이트 내의 메서드들의 이름이 같아도 괜찮다.
+-   다만 호출시에 문제가 될 수 있는데 이 때에는 예시쳐럼 호출을 한다.
+
+```rust
+trait Pilot {
+    fn fly(&self);
+}
+
+trait Wizard {
+    fn fly(&self);
+}
+
+struct Human;
+
+impl Pilot for Human {
+    fn fly(&self) {
+        println!("This is your captain speaking.");
+    }
+}
+
+impl Wizard for Human {
+    fn fly(&self) {
+        println!("Up!");
+    }
+}
+
+impl Human {
+    fn fly(&self) {
+        println!("*waving arms furiously*");
+    }
+}
+
+fn main() {
+    let person = Human;
+    //&self 파라미터를 받기 때문에 식별이 된다.
+    Pilot::fly(&person);
+    Wizard::fly(&person);
+    //그냥 쓰면 타입에 구현 된 걸 호출한다.
+    person.fly();
+}
+```
+
+-   다만 `&self`를 받지 않는 함수의 경우, 아래처럼 꼭 전부 써주어야 한다.
+
+```rust
+trait Animal {
+    fn baby_name() -> String;
+}
+
+struct Dog;
+
+impl Dog {
+    fn baby_name() -> String {
+        String::from("Spot")
+    }
+}
+
+impl Animal for Dog {
+    fn baby_name() -> String {
+        String::from("puppy")
+    }
+}
+
+fn main() {
+    println!("A baby dog is called a {}", Dog::baby_name());
+    //A baby dog is called a Spot
+}
+
+fn main() {
+    //Animal 트레이트 구현체를 쓰고 싶으면 이렇게
+    println!("A baby dog is called a {}", <Dog as Animal>::baby_name());
+    //A baby dog is called a puppy
+}
+```
+
+##### 수퍼 트레이트
+
+-   트레이트가 구현을 요구하는 트레이트를 말한다.
+
+```rust
+use std::fmt;
+
+trait OutlinePrint: fmt::Display {
+    fn outline_print(&self) {
+        let output = self.to_string();
+        let len = output.len();
+        println!("{}", "*".repeat(len + 4));
+        println!("*{}*", " ".repeat(len + 2));
+        println!("* {} *", output);
+        println!("*{}*", " ".repeat(len + 2));
+        println!("{}", "*".repeat(len + 4));
+    }
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+//구현을 해주어야함
+//impl fmt::Display for Point {
+//    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//        write!(f, "({}, {})", self.x, self.y)
+//    }
+//}
+
+impl OutlinePrint for Point {}
+//^^^^^^^^^^ `Point` cannot be formatted with the default formatter
+//^^^^^^^^^^^^ required by this bound in `OutlinePrint`
+
+fn main() {}
+```
+
+##### 뉴타입 패턴
+
+-   트레이트에는 외부 크레이트의 타입에 구현될 수 없고, 외부의 트레이트도 내부 크레이트 타입에 구현될 수 없는 `orphan rule`이 있다.
+-   이 제약을 깰 수 있는 방법이 존재하는데 바로 원래 타입을 tuple struct로 감싸는 것이다.
+-   다만 어디까지나 tuple struct에 트레이트를 구현하므로 원래 타입의 기능은 정상적으로 사용할 수 없다(`.0`으로 접근해야한다).
+-   하지만 이도 `Deref`를 구현하여 해결할 수 있다.
+-   원래 타입의 값에 접근하므로 성능상의 제약은 없다.
+-   타입 세이프티와 추상화에도 사용할 수 있다. 즉, re-export에도 활용할 수 있다.
+
+```rust
+use std::fmt;
+
+struct Wrapper(Vec<String>);
+
+//원래라면 Vec<T>에 fmt::Display를 구현할 수 없다.
+impl fmt::Display for Wrapper {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[{}]", self.0.join(", "))
+    }
+}
+
+fn main() {
+    let w = Wrapper(vec![String::from("hello"), String::from("world")]);
+    println!("w = {}", w);
+    //w = [hello, world]
+}
+```
+
 #### 타입
+
+##### `type`
+
+-   타입에 별명을 줄 수 있다. C의 `typedef`를 생각하면 된다.
+
+```rust
+type Kilometers = i32;
+
+let x: i32 = 5;
+let y: Kilometers = 5;
+//딱히 다른 타입이라고 인식하지 않는다.
+println!("x + y = {}", x + y);
+```
+
+```rust
+type Thunk = Box<dyn Fn() + Send + 'static>;
+
+let f: Thunk = Box::new(|| println!("hi"));
+
+fn takes_long_type(f: Thunk) {
+    // --snip--
+}
+
+fn returns_long_type() -> Thunk {
+    // --snip--
+    Box::new(|| ())
+    }
+```
+
+##### !, empty type, or never type
+
+-   `!`로 정의하며, 아무 값도 가지지 않는다.
+
+```rust
+//diverging function 이라고도 한다.
+fn bar() -> ! {
+    // --snip--
+}
+```
+
+```rust
+let guess: u32 = match guess.trim().parse() {
+    Ok(num) => num,
+    //never를 리턴함으로써 guess가 u32로 추론될 수 있다는 걸 알려준다.
+    //이렇게 match안에 제어 구문도 작성할 수 있는 것이다.
+    Err(_) => continue,
+};
+
+//panic!
+impl<T> Option<T> {
+    pub fn unwrap(self) -> T {
+        match self {
+            Some(val) => val,
+            //panic!도 마찬가지
+            None => panic!("called `Option::unwrap()` on a `None` value"),
+        }
+    }
+}
+
+//loop
+print!("forever ");
+//이 또한 !를 리턴한다.
+//하지만 break가 들어가면 ()를 리턴한다.
+loop {
+    print!("and ever ");
+}
+```
+
+##### DST(Dynamically Sized Type)
+
+-   기본적으로 rust는 컴파일 타임의 모든 타입의 사이즈를 알아야 한다.
+-   하지만 문자열 슬라이스와 같이 레퍼런스를를 활용하면 동적 사이즈 타입을 정의할 수 있다.
+-   또한, `Sized` 트레이트를 구현하면 이런 `DST`를 구현할 수 있다.
+
+```rust
+//실상 런타임까지는 그 길이를 알 수 없다.
+let s1: str = "Hello there!";
+  //^^ doesn't have a size known at compile-time
+let s2: &str = "How's it going?";
+//하지만 '&'는 실제 str의 주소와 그 길이 정보를 가지고 있기 때문에 컴파일 타임에 판별이 가능하다.
+```
+
+```rust
+//컴파일 타입에 사이즈를 알 수 있는 타입이라면 ok
+fn generic<T: Sized>(t: T) {
+    // --snip--
+}
+//트레이트 바운드에 ?를 붙임으로써 위의 제약을 없앨 수 있다.
+//Sized가 구현 될 수도 있고 아닐 수도 있음.
+//또한 타입 파라미터에 레퍼런스를 사용함도 확인할 수 있다.
+fn generic<T: ?Sized>(t: &T) {
+    // --snip--
+}
+```
 
 #### 함수
 
+##### 함수 포인터
+
+-   함수는 `fn` 타입, 함수 포인터 타입으로 coerece 될 수 있다. 이는 `Fn` 클로저 트레이트와는 다른 것이다.
+-   함수 포인터는 `Fn`, `FnMut`, `FnOnce` 세 트레이트를 전부 구현한다. 즉, 클로저와 호환이 된다는 의미다.
+
+```rust
+fn add_one(x: i32) -> i32 {
+    x + 1
+}
+
+fn do_twice(f: fn(i32) -> i32, arg: i32) -> i32 {
+    f(arg) + f(arg)
+}
+
+fn main() {
+    let answer = do_twice(add_one, 5);
+
+    println!("The answer is: {}", answer);
+}
+```
+
+```rust
+fn main() {
+    let list_of_numbers = vec![1, 2, 3];
+    let list_of_strings: Vec<String> =
+        list_of_numbers.iter().map(|i| i.to_string()).collect();
+}
+
+//이렇게 클로저에 적용이 가능하다.
+fn main() {
+    let list_of_numbers = vec![1, 2, 3];
+    let list_of_strings: Vec<String> =
+        list_of_numbers.iter().map(ToString::to_string).collect();
+}
+
+//이런 활용도 된다.
+enum Status {
+    Value(u32),
+    Stop,
+}
+
+let list_of_statuses: Vec<Status> = (0u32..20).map(Status::Value).collect();
+```
+
+##### 클로저 리턴하기
+
+-   클로저는 트레이트로 표현된다. 즉, 원칙적으로 리턴 값으로 쓸 수 없다(정확한 타입 지정이 안 되어 할당 크기를 모르기 때문).
+
+```rust
+fn returns_closure() -> dyn Fn(i32) -> i32 {
+                      //^^^^^^^^^^^^^^^^^^ doesn't have a size known at compile-time
+    |x| x + 1
+}
+```
+
+```rust
+//이렇게 트레이트 오브젝트를 써주면 된다.
+fn returns_closure() -> Box<dyn Fn(i32) -> i32> {
+    Box::new(|x| x + 1)
+}
+```
+
 #### 매크로
+
+-   일반적으로 프로그래밍 언어를 확장하기 위해 쓰는 메타프로그래밍용의 그 매크로 맞다.
+-   쓰기 전에 무조건 정의가 되어있어야 한다.
+
+##### 선언형 매크로
+
+-   일반적으로 매크로라고 부르는 것이며 가장 많이 사용된다.
+-   코드를 대체할 때 사용한다.
+-   `macro_rules!`를 이용해 정의한다.
+-   `#[macro_export]`를 통해 매크로를 노출할 수 있음을 나타낸다.
+-   매크로 정의에 대한 상세 방법은 [The Little Book of Rust Macros](https://veykril.github.io/tlborm/)를 참조한다.
+-   rust는 리플렉션이 없다.
+
+```rust
+/* 실제 구현에는 메모리를 미리 할당하는 부분이 존재한다.*/
+#[macro_export]
+macro_rules! vec {
+    //패턴은 값이 아닌, rust의 코드를 나타낸다.
+    // $는 매크로의 변수를 나타낸다.
+    //*는 0개 이상을 나타내는 패턴이다.
+    ( $( $x:expr ),* ) => {
+        {
+            let mut temp_vec = Vec::new();
+            //각 패턴에 대해 실행한다.
+            $(
+                temp_vec.push($x);
+            )*
+            /*
+            {
+                let mut temp_vec = Vec::new();
+                temp_vec.push(1);
+                temp_vec.push(2);
+                temp_vec.push(3);
+                temp_vec
+            }
+            */
+            temp_vec
+        }
+    };
+}
+
+let v: Vec<u32> = vec![1, 2, 3];
+```
+
+##### 프로시저형 매크로
+
+-   프로시저형 매크로는 단순히 코드를 대체하는 것 외에도 함수(프로시저)처럼 동작하는 매크로를 말한다.
+-   세 가지 유형(derive, attribute-like, function-like)이 존재한다.
+
+```rust
+use proc_macro;
+
+#[some_attribute]
+//TokenStream은 매크로에서 사용하는 토큰 시퀀스를 표현한다.
+pub fn some_name(input: TokenStream) -> TokenStream {
+}
+```
+
+###### derive
+
+-   `#[derive(매크로)]`로 struct나 enum에 기본동작을 지정할 수 있다.
+-   새 프로젝트에 매크로를 정의한다. 컨벤션은 `프로젝트_derive`와 같이 짓는다.
+-   `proc-macro`를 *Cargo.toml*에 정의해주며 `syn`와 `quote` 패키지도 포함 해준다. 각 다음과 같은 역할을 한다.
+-   `proc-macro`: rust에 내장된 크레이트며 코드 자체를 읽고 다룰 수 있는 컴파일러 API를 제공한다(`TokenStream`).
+-   `syn`: 코드 문자열을 AST로 바꾸어 주는 역할을 한다.
+-   `quote`: `syn`에서 얻어온 데이터를 다시 rust 코드로 바꾸어준다.
+
+```rust
+// pancakes -  src/main.rs
+use hello_macro::HelloMacro;
+use hello_macro_derive::HelloMacro;
+
+//트레이트로도 가능하지만 직접 그 때마다 구현 해주어야 한다.
+#[derive(HelloMacro)]
+struct Pancakes;
+
+fn main() {
+    //Hello, Macro! My name is Pancakes!
+    Pancakes::hello_macro();
+}
+```
+
+```toml
+# hello_macro_derive - Cargo.toml
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "1.0"
+quote = "1.0"
+```
+
+```rust
+use proc_macro::TokenStream;
+use quote::quote;
+use syn;
+
+//이름을 HelloMacro로
+#[proc_macro_derive(HelloMacro)]
+pub fn hello_macro_derive(input: TokenStream) -> TokenStream {
+    //코드를 AST로 바꾸어준다.
+    let ast = syn::parse(input).unwrap();
+
+    impl_hello_macro(&ast)
+}
+
+fn impl_hello_macro(ast: &syn::DeriveInput) -> TokenStream {
+    //이름을 얻어온다.
+    let name = &ast.ident;
+    //AST를 다시 코드(quote! 안에 있는)로 바꾸어준다.
+    let gen = quote! {
+        //#을 이용해 변수처럼 활용할 수 있다.
+        impl HelloMacro for #name {
+            fn hello_macro() {
+                println!("Hello, Macro! My name is {}!", stringify!(#name));
+                //stringify!를 쓰면 변수를 새로 할당 안 하고 코드 자체를 평가해서 사용할 수 있다.
+            }
+        }
+    };
+    //API 인터페이스상 필요한 부분.
+    gen.into()
+}
+```
+
+###### attribute-like 매크로
+
+-   `derive`와 함께 쓰는 매크로는 struct나 enum 밖에 못 쓴다. 하지만 어트리뷰트 라이크 매크로는 이 한계를 뛰어넘어 아무데나 쓸 수 있다.
+
+```rust
+#[proc_macro_attribute]
+pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
+}
+
+#[route(GET, "/")]
+fn index() {
+}
+```
+
+###### function-like 매크로
+
+-   함수 호출하는 것과 비슷하게 생긴 매크로.
+-   `macro_rules!`을 이용해 정의하는 선언형 매크로는 match와 비슷한 구조를 가지지만 얘는 조금 더 함수에 가깝다.
+
+```rust
+let sql = sql!(SELECT * FROM posts WHERE id=1);
+
+#[proc_macro]
+pub fn sql(input: TokenStream) -> TokenStream {
+}
+```
 
 ### 기타
